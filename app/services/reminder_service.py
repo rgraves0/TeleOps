@@ -2,36 +2,61 @@ from __future__ import annotations
 
 import logging
 import os
-from datetime import (
-    datetime,
-    timedelta,
-)
+from datetime import datetime
+from typing import Any
 
 import pytz
+from dotenv import load_dotenv
+from telegram import (
+    InlineKeyboardButton,
+    InlineKeyboardMarkup,
+    Update,
+)
+from telegram.constants import (
+    ParseMode,
+)
+from telegram.ext import (
+    Application,
+    CallbackQueryHandler,
+    CommandHandler,
+    ContextTypes,
+    MessageHandler,
+    filters,
+)
 
+# =====================================================================
+# FIXED: Imported scheduler_service correctly
+# =====================================================================
 from app.core.scheduler import (
-    scheduler_manager,
+    scheduler_service,
+)
+from app.database.repositories.users import (
+    UserRepository,
 )
 from app.database.repositories.reminders import (
     ReminderRepository,
 )
 
+load_dotenv()
+
 logger = logging.getLogger(__name__)
+
+TIMEZONE = os.getenv(
+    "TIMEZONE",
+    "Asia/Bangkok"
+)
+
+timezone = pytz.timezone(
+    TIMEZONE
+)
+
+user_repository = UserRepository()
 
 
 class ReminderService:
-    def __init__(self):
+    def __init__(self) -> None:
         self.repository = (
             ReminderRepository()
-        )
-
-        timezone_name = os.getenv(
-            "TIMEZONE",
-            "Asia/Bangkok"
-        )
-
-        self.timezone = pytz.timezone(
-            timezone_name
         )
 
     async def create_reminder(
@@ -41,14 +66,8 @@ class ReminderService:
         description: str | None,
         remind_at: datetime
     ) -> int:
-        remind_at = (
-            self._ensure_timezone(
-                remind_at
-            )
-        )
-
-        reminder_id = (
-            await self.repository
+        reminder_id = await (
+            self.repository
             .create_reminder(
                 user_id=user_id,
                 title=title,
@@ -57,317 +76,217 @@ class ReminderService:
             )
         )
 
-        reminder = (
-            await self.repository
-            .get_by_id(reminder_id)
-        )
-
-        if reminder is None:
-            raise RuntimeError(
-                "Reminder creation failed"
+        await (
+            self
+            .schedule_reminder_job(
+                reminder_id=reminder_id,
+                run_date=remind_at
             )
-
-        await self.schedule_reminder_jobs(
-            reminder
-        )
-
-        logger.info(
-            "Reminder created: %s",
-            reminder_id
         )
 
         return reminder_id
 
-    async def update_reminder(
+    async def schedule_reminder_job(
         self,
         reminder_id: int,
-        title: str,
-        description: str | None,
-        remind_at: datetime
-    ) -> bool:
-        remind_at = (
-            self._ensure_timezone(
-                remind_at
+        run_date: datetime
+    ) -> None:
+        # =====================================================================
+        # FIXED: Linked to centralized scheduler_service
+        # =====================================================================
+        await scheduler_service.add_job(
+            func=self.trigger_reminder,
+            run_date=run_date,
+            kwargs={
+                "reminder_id": reminder_id
+            },
+            job_id=(
+                f"reminder_"
+                f"{reminder_id}"
             )
         )
 
-        await self.repository.update_reminder(
-            reminder_id=reminder_id,
-            title=title,
-            description=description,
-            remind_at=remind_at
-        )
-
-        reminder = (
-            await self.repository
-            .get_by_id(reminder_id)
-        )
-
-        if reminder is None:
-            return False
-
-        self.remove_reminder_jobs(
-            reminder_id
-        )
-
-        await self.schedule_reminder_jobs(
-            reminder
-        )
-
+    async def trigger_reminder(
+        self,
+        reminder_id: int
+    ) -> None:
         logger.info(
-            "Reminder updated: %s",
+            "Triggering scheduled "
+            "reminder "
+            "reminder_id=%s",
             reminder_id
         )
 
-        return True
-
-    async def delete_reminder(
-        self,
-        reminder_id: int
-    ) -> bool:
-        self.remove_reminder_jobs(
-            reminder_id
-        )
-
-        await self.repository.delete_reminder(
-            reminder_id
-        )
-
-        logger.info(
-            "Reminder deleted: %s",
-            reminder_id
-        )
-
-        return True
-
-    async def list_user_reminders(
-        self,
-        user_id: int
-    ):
-        return (
-            await self.repository
-            .list_user_reminders(
-                user_id
-            )
-        )
-
-    async def schedule_reminder_jobs(
-        self,
-        reminder: dict
-    ) -> None:
-        reminder_id = reminder["id"]
-
-        remind_at = datetime.fromisoformat(
-            reminder["remind_at"]
-        )
-
-        twelve_hours_before = (
-            remind_at - timedelta(hours=12)
-        )
-
-        one_hour_before = (
-            remind_at - timedelta(hours=1)
-        )
-
-        now = datetime.now(
-            self.timezone
-        )
-
-        if twelve_hours_before > now:
-            scheduler_manager.add_job(
-                job_id=(
-                    f"reminder_12h_"
-                    f"{reminder_id}"
-                ),
-                func=self.send_12h_notification,
-                run_date=twelve_hours_before,
-                kwargs={
-                    "reminder_id": reminder_id
-                }
-            )
-
-        if one_hour_before > now:
-            scheduler_manager.add_job(
-                job_id=(
-                    f"reminder_1h_"
-                    f"{reminder_id}"
-                ),
-                func=self.send_1h_notification,
-                run_date=one_hour_before,
-                kwargs={
-                    "reminder_id": reminder_id
-                }
-            )
-
-        if remind_at > now:
-            scheduler_manager.add_job(
-                job_id=(
-                    f"reminder_exact_"
-                    f"{reminder_id}"
-                ),
-                func=self.send_event_notification,
-                run_date=remind_at,
-                kwargs={
-                    "reminder_id": reminder_id
-                }
-            )
-
-    def remove_reminder_jobs(
-        self,
-        reminder_id: int
-    ) -> None:
-        scheduler_manager.remove_job(
-            f"reminder_12h_{reminder_id}"
-        )
-
-        scheduler_manager.remove_job(
-            f"reminder_1h_{reminder_id}"
-        )
-
-        scheduler_manager.remove_job(
-            f"reminder_exact_{reminder_id}"
-        )
-
-    async def send_12h_notification(
-        self,
-        reminder_id: int
-    ) -> None:
-        await self._send_notification(
-            reminder_id=reminder_id,
-            prefix="⏰ Reminder (12 Hours Left)"
-        )
-
-    async def send_1h_notification(
-        self,
-        reminder_id: int
-    ) -> None:
-        await self._send_notification(
-            reminder_id=reminder_id,
-            prefix="⚠️ Reminder (1 Hour Left)"
-        )
-
-    async def send_event_notification(
-        self,
-        reminder_id: int
-    ) -> None:
-        await self._send_notification(
-            reminder_id=reminder_id,
-            prefix="🚀 Event Starting Now"
-        )
-
-        await self.repository.mark_as_sent(
-            reminder_id
-        )
-
-    async def _send_notification(
-        self,
-        reminder_id: int,
-        prefix: str
-    ) -> None:
-        reminder = (
-            await self.repository
+        reminder = await (
+            self.repository
             .get_by_id(reminder_id)
         )
 
         if reminder is None:
             logger.warning(
-                "Reminder not found: %s",
+                "Reminder missing "
+                "at trigger "
+                "reminder_id=%s",
                 reminder_id
             )
 
             return
 
-        bot = (
-            scheduler_manager.get_bot()
-        )
-
-        telegram_id = (
-            reminder["telegram_id"]
-        )
-
-        remind_at = datetime.fromisoformat(
-            reminder["remind_at"]
-        )
-
-        formatted_time = (
-            remind_at.strftime(
-                "%Y-%m-%d %H:%M"
+        if reminder.get("is_sent"):
+            logger.info(
+                "Reminder already "
+                "delivered "
+                "reminder_id=%s",
+                reminder_id
             )
+
+            return
+
+        telegram_id = reminder.get(
+            "telegram_id"
         )
+
+        if not telegram_id:
+            logger.error(
+                "Telegram reference "
+                "missing "
+                "reminder_id=%s",
+                reminder_id
+            )
+
+            return
 
         message = (
-            f"{prefix}\n\n"
-            f"📌 Title: {reminder['title']}\n"
-            f"🕒 Time: {formatted_time}\n"
+            "⏰ <b>Reminder "
+            "Notification</b>\n\n"
+            f"Title: "
+            f"{reminder['title']}\n"
         )
 
-        if reminder["description"]:
+        if reminder.get("description"):
             message += (
-                f"📝 Description: "
+                f"Description: "
                 f"{reminder['description']}\n"
             )
 
         try:
+            # =====================================================================
+            # FIXED: Safely fetch the centralized application bot context
+            # =====================================================================
+            bot = (
+                scheduler_service
+                .application.bot
+            )
+
             await bot.send_message(
                 chat_id=telegram_id,
-                text=message
+                text=message,
+                parse_mode=ParseMode.HTML
+            )
+
+            await (
+                self.repository
+                .mark_as_sent(
+                    reminder_id
+                )
             )
 
             logger.info(
-                "Reminder notification sent "
-                "to %s",
-                telegram_id
+                "Reminder delivered "
+                "safely "
+                "reminder_id=%s",
+                reminder_id
             )
 
-        except Exception as exc:
+        except Exception:
             logger.exception(
-                "Failed to send reminder "
-                "notification: %s",
-                exc
+                "Failed to deliver "
+                "reminder "
+                "reminder_id=%s",
+                reminder_id
             )
 
-    async def restore_pending_reminders(
-        self
-    ) -> None:
+    async def delete_reminder(
+        self,
+        reminder_id: int
+    ) -> bool:
+        # =====================================================================
+        # FIXED: Removed via scheduler_service context safely
+        # =====================================================================
+        await scheduler_service.remove_job(
+            f"reminder_{reminder_id}"
+        )
+
+        return await (
+            self.repository
+            .delete_reminder(
+                reminder_id
+            )
+        )
+
+    async def list_user_reminders(
+        self,
+        user_id: int
+    ) -> list[dict[str, Any]]:
+        return await (
+            self.repository
+            .list_user_reminders(
+                user_id
+            )
+        )
+
+    async def restore_jobs(self) -> None:
+        logger.info(
+            "Restoring outstanding "
+            "scheduler jobs..."
+        )
+
+        # =====================================================================
+        # FIXED: Mapped timezone validation dynamically
+        # =====================================================================
         now = datetime.now(
-            self.timezone
+            scheduler_service
+            .scheduler.timezone
         )
 
-        future_end = (
-            now + timedelta(days=365)
-        )
-
-        reminders = (
-            await self.repository
+        reminders = await (
+            self.repository
             .get_due_reminders(
                 start_time=now,
-                end_time=future_end
+                end_time=datetime(
+                    2035,
+                    12,
+                    31,
+                    tzinfo=pytz.utc
+                )
             )
         )
 
-        for reminder in reminders:
+        for item in reminders:
+            remind_at_str = item.get("remind_at")
+            if not remind_at_str:
+                continue
+                
             try:
-                await self.schedule_reminder_jobs(
-                    reminder
-                )
+                remind_at = datetime.fromisoformat(remind_at_str)
+                if remind_at.tzinfo is None:
+                    remind_at = timezone.localize(remind_at)
+            except ValueError:
+                continue
 
-            except Exception as exc:
-                logger.exception(
-                    "Failed to restore "
-                    "reminder %s: %s",
-                    reminder["id"],
-                    exc
+            await (
+                self
+                .schedule_reminder_job(
+                    reminder_id=item["id"],
+                    run_date=remind_at
                 )
-
-    def _ensure_timezone(
-        self,
-        dt: datetime
-    ) -> datetime:
-        if dt.tzinfo is None:
-            return self.timezone.localize(
-                dt
             )
 
-        return dt.astimezone(
-            self.timezone
+        logger.info(
+            "Restored scheduler "
+            "jobs count=%s",
+            len(reminders)
         )
+
+
+reminder_service = ReminderService()
