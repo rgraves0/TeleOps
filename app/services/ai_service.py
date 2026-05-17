@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import gc
 import json
 import logging
 import os
@@ -35,40 +36,40 @@ from app.services.plugin_service import (
 logger = logging.getLogger(__name__)
 
 
-AGENT_WORKFLOW_PROMPT = """
-You are TeleOps-AI Autonomous Agent Planner.
+WORKFLOW_ROUTER_PROMPT = """
+You are TeleOps-AI Autonomous Workflow Router.
 
-Your responsibilities:
+Your job:
 - Analyze user requests
-- Decide whether tools are needed
-- Build multi-step workflows
-- Chain tools and AI tasks together
+- Decide whether tools are required
+- Build lightweight execution workflows
+- Avoid unnecessary tool usage
+- Optimize for low-memory environments
 
 AVAILABLE TOOLS:
 
 1. web_search
 Purpose:
-- Search latest news
-- Search internet information
-- Search current events
+- Search latest information
+- Search internet data
+- Search news
 
 JSON:
 {
   "tool": "web_search",
-  "query": "search query"
+  "query": "latest AI news"
 }
 
 2. weather
 Purpose:
-- Weather forecast
-- Rain
-- Climate
+- Check weather
+- Forecast
 - Temperature
 
 JSON:
 {
   "tool": "weather",
-  "city": "city name"
+  "city": "Bangkok"
 }
 
 3. system_status
@@ -84,8 +85,8 @@ JSON:
 
 4. email_summary
 Purpose:
-- Check unread emails
-- Summarize unread emails
+- Fetch unread emails
+- Summarize inbox
 
 JSON:
 {
@@ -94,26 +95,14 @@ JSON:
 
 5. rclone_search
 Purpose:
-- Search cloud storage files
-- Search indexed metadata
-- Find files in remote storage
+- Search indexed cloud storage metadata
+- Locate files
 
 JSON:
 {
   "tool": "rclone_search",
-  "keyword": "document.pdf"
+  "keyword": "backup.zip"
 }
-
-AVAILABLE AI TASKS:
-
-1. summarize
-2. translate
-3. explain
-
-RULES:
-- Return ONLY valid JSON
-- Never return markdown
-- Never explain reasoning
 
 WORKFLOW FORMAT:
 
@@ -127,14 +116,12 @@ WORKFLOW FORMAT:
     },
     {
       "step": 2,
-      "type": "ai_task",
-      "task": "summarize",
-      "language": "burmese"
+      "type": "summarize"
     }
   ]
 }
 
-If casual conversation only:
+CASUAL CHAT FORMAT:
 
 {
   "workflow": [
@@ -144,59 +131,64 @@ If casual conversation only:
     }
   ]
 }
+
+RULES:
+- Return ONLY valid JSON
+- Never return markdown
+- Never explain reasoning
 """
 
 
 SUMMARY_PROMPT = """
 You are TeleOps-AI.
 
-Convert raw outputs into human-friendly conversational replies.
+Convert raw tool outputs into clean conversational replies.
 
 Rules:
+- Be concise
+- Be human-friendly
+- Reply in user's language
+- Burmese user => Burmese reply
+- English user => English reply
 - Never expose raw JSON
-- Never expose internal system logic
-- Keep replies concise
-- Reply in same language as user
-- Burmese => Burmese response
-- English => English response
-- Sound natural and human
+- Never expose raw database rows
+- Never expose secrets or tokens
 """
 
 
 EMAIL_SUMMARY_PROMPT = """
-You are TeleOps-AI Email Intelligence Assistant.
+You are TeleOps-AI Email Assistant.
 
-Your job:
-- Read unread emails
-- Summarize clearly
-- Mention sender
-- Mention subject
-- Mention important points
+Summarize unread emails clearly.
+
+Mention:
+- Sender
+- Subject
+- Important information
 
 Rules:
 - Keep concise
-- Reply in same language as user
-- Never expose raw MIME or HTML
+- Never expose raw HTML
+- Never expose MIME structures
+- Reply naturally
 """
 
 
 RCLONE_SUMMARY_PROMPT = """
-You are TeleOps-AI Cloud Storage Assistant.
+You are TeleOps-AI Storage Assistant.
 
-Your job:
-- Read raw storage search results
-- Convert them into clean conversational summaries
+Convert storage search results into clean conversational summaries.
+
+Mention:
+- Remote name
+- File name
+- Folder path
+- Approximate file size
 
 Rules:
-- Mention:
-  - remote storage name
-  - file name
-  - folder path
-  - approximate size
-- Organize results clearly
-- If no files found, politely explain
-- Never expose raw database rows
-- Reply in same language as user
+- Organize clearly
+- Never expose raw SQL rows
+- Reply naturally
 """
 
 
@@ -204,7 +196,9 @@ class AIService:
     def __init__(self):
         self.provider = AIProvider()
 
-        self.max_memory_messages = 20
+        self.max_history_messages = 20
+
+        self.max_email_body_chars = 2000
 
         self.rclone_repository = (
             RcloneMetaRepository()
@@ -215,9 +209,17 @@ class AIService:
         telegram_user_id: int,
         message: str
     ) -> dict[str, Any]:
+        memory_context = []
+
+        workflow = {}
+
+        workflow_context = ""
+
+        executed_steps = []
+
         try:
             memory_context = (
-                await self.build_memory_context(
+                await self.get_memory_context(
                     telegram_user_id
                 )
             )
@@ -236,23 +238,18 @@ class AIService:
                 )
             )
 
-            logger.info(
-                "Workflow generated "
-                "steps=%s",
-                len(workflow_steps)
-            )
-
             if not workflow_steps:
                 response = await (
-                    self.handle_chat(
-                        telegram_user_id,
-                        message,
-                        memory_context
+                    self.generate_chat_response(
+                        memory_context=(
+                            memory_context
+                        ),
+                        message=message
                     )
                 )
 
                 await (
-                    self.store_conversation_pair(
+                    self.store_conversation(
                         telegram_user_id,
                         message,
                         response
@@ -273,15 +270,16 @@ class AIService:
                 == "chat"
             ):
                 response = await (
-                    self.handle_chat(
-                        telegram_user_id,
-                        message,
-                        memory_context
+                    self.generate_chat_response(
+                        memory_context=(
+                            memory_context
+                        ),
+                        message=message
                     )
                 )
 
                 await (
-                    self.store_conversation_pair(
+                    self.store_conversation(
                         telegram_user_id,
                         message,
                         response
@@ -293,112 +291,57 @@ class AIService:
                     "response": response
                 }
 
-            workflow_context = ""
-
-            executed_steps = []
-
             for step in workflow_steps:
-                step_type = (
-                    step.get(
-                        "type"
-                    )
-                )
-
-                logger.info(
-                    "Executing workflow "
-                    "step=%s type=%s",
-                    step.get("step"),
-                    step_type
-                )
-
                 try:
-                    if step_type == "tool":
-                        result = await (
-                            self.execute_tool_step(
-                                telegram_user_id=(
-                                    telegram_user_id
-                                ),
-                                step=step
+                    result = await (
+                        self.execute_workflow_step(
+                            telegram_user_id=(
+                                telegram_user_id
+                            ),
+                            step=step,
+                            workflow_context=(
+                                workflow_context
                             )
                         )
+                    )
 
+                    if result:
                         workflow_context += (
                             "\n\n"
-                            "[Tool Result]\n"
                             f"{result}"
                         )
 
-                        executed_steps.append(
-                            {
-                                "step": (
-                                    step.get(
-                                        "step"
-                                    )
-                                ),
-                                "tool": (
-                                    step.get(
-                                        "tool"
-                                    )
-                                ),
-                                "result": result
-                            }
-                        )
-
-                    elif (
-                        step_type
-                        == "ai_task"
-                    ):
-                        result = await (
-                            self.execute_ai_task(
-                                original_message=(
-                                    message
-                                ),
-                                workflow_context=(
-                                    workflow_context
-                                ),
-                                task_step=step
+                    executed_steps.append(
+                        {
+                            "step": (
+                                step.get(
+                                    "step"
+                                )
+                            ),
+                            "type": (
+                                step.get(
+                                    "type"
+                                )
                             )
-                        )
-
-                        workflow_context += (
-                            "\n\n"
-                            "[AI Task Result]\n"
-                            f"{result}"
-                        )
-
-                        executed_steps.append(
-                            {
-                                "step": (
-                                    step.get(
-                                        "step"
-                                    )
-                                ),
-                                "task": (
-                                    step.get(
-                                        "task"
-                                    )
-                                ),
-                                "result": result
-                            }
-                        )
+                        }
+                    )
 
                 except Exception as exc:
                     logger.exception(
-                        "Workflow step "
-                        "failed: %s",
+                        "Workflow step failed: %s",
                         exc
                     )
 
                     workflow_context += (
                         "\n\n"
-                        "[Workflow Error]\n"
-                        "One step failed but "
-                        "workflow continued."
+                        "One workflow step "
+                        "failed but execution "
+                        "continued safely."
                     )
 
             final_response = await (
                 self.generate_final_response(
-                    original_user_message=message,
+                    original_message=message,
                     workflow_context=(
                         workflow_context
                     )
@@ -406,7 +349,7 @@ class AIService:
             )
 
             await (
-                self.store_conversation_pair(
+                self.store_conversation(
                     telegram_user_id,
                     message,
                     final_response
@@ -421,28 +364,36 @@ class AIService:
 
         except Exception as exc:
             logger.exception(
-                "AIService process failed: %s",
+                "AIService failed: %s",
                 exc
             )
 
-            fallback_response = (
-                await self.generate_friendly_error(
-                    user_message=message
+            fallback = await (
+                self.generate_friendly_error(
+                    message
                 )
             )
 
             await (
-                self.store_conversation_pair(
+                self.store_conversation(
                     telegram_user_id,
                     message,
-                    fallback_response
+                    fallback
                 )
             )
 
             return {
                 "type": "error",
-                "response": fallback_response
+                "response": fallback
             }
+
+        finally:
+            del memory_context
+            del workflow
+            del workflow_context
+            del executed_steps
+
+            gc.collect()
 
     async def generate_workflow(
         self,
@@ -451,20 +402,20 @@ class AIService:
             dict[str, str]
         ]
     ) -> dict[str, Any]:
-        messages = [
+        router_messages = [
             {
                 "role": "system",
                 "content": (
-                    AGENT_WORKFLOW_PROMPT
+                    WORKFLOW_ROUTER_PROMPT
                 )
             }
         ]
 
-        messages.extend(
+        router_messages.extend(
             memory_context[-10:]
         )
 
-        messages.append(
+        router_messages.append(
             {
                 "role": "user",
                 "content": message
@@ -473,14 +424,13 @@ class AIService:
 
         raw_response = await (
             self.provider.generate_response(
-                messages=messages,
+                messages=router_messages,
                 temperature=0.1
             )
         )
 
         logger.info(
-            "Workflow planner "
-            "response=%s",
+            "Workflow router response=%s",
             raw_response
         )
 
@@ -494,8 +444,7 @@ class AIService:
                 dict
             ):
                 raise ValueError(
-                    "Workflow response "
-                    "must be dict"
+                    "Workflow must be dict"
                 )
 
             return parsed
@@ -514,81 +463,38 @@ class AIService:
                 ]
             }
 
-    async def build_memory_context(
-        self,
-        telegram_user_id: int
-    ) -> list[dict[str, str]]:
-        history = await (
-            chat_memory_repository
-            .get_recent_history(
-                telegram_user_id=(
-                    telegram_user_id
-                ),
-                limit=(
-                    self.max_memory_messages
-                )
-            )
-        )
-
-        messages = []
-
-        for item in history:
-            content = item.get(
-                "content",
-                ""
-            )
-
-            if not content:
-                continue
-
-            messages.append(
-                {
-                    "role": item.get(
-                        "role",
-                        "user"
-                    ),
-                    "content": content
-                }
-            )
-
-        return messages
-
-    async def handle_chat(
+    async def execute_workflow_step(
         self,
         telegram_user_id: int,
-        message: str,
-        memory_context: list[
-            dict[str, str]
-        ]
+        step: dict[str, Any],
+        workflow_context: str
     ) -> str:
-        messages = [
-            {
-                "role": "system",
-                "content": SYSTEM_PROMPT
-            }
-        ]
-
-        messages.extend(
-            memory_context
-        )
-
-        messages.append(
-            {
-                "role": "user",
-                "content": message
-            }
-        )
-
-        response = await (
-            self.provider.generate_response(
-                messages=messages,
-                temperature=0.7
+        step_type = (
+            step.get(
+                "type"
             )
         )
 
-        return response
+        if step_type == "tool":
+            return await (
+                self.execute_tool(
+                    telegram_user_id=(
+                        telegram_user_id
+                    ),
+                    step=step
+                )
+            )
 
-    async def execute_tool_step(
+        if step_type == "summarize":
+            return await (
+                self.summarize_context(
+                    workflow_context
+                )
+            )
+
+        return ""
+
+    async def execute_tool(
         self,
         telegram_user_id: int,
         step: dict[str, Any]
@@ -597,11 +503,6 @@ class AIService:
             step.get(
                 "tool"
             )
-        )
-
-        logger.info(
-            "Executing tool=%s",
-            tool_name
         )
 
         if tool_name == "web_search":
@@ -624,8 +525,8 @@ class AIService:
             )
 
         if tool_name in (
-            "mail_check",
-            "email_summary"
+            "email_summary",
+            "mail_check"
         ):
             return await (
                 self.execute_email_summary(
@@ -644,330 +545,26 @@ class AIService:
             )
 
         return (
-            "Unknown tool "
+            f"Unknown tool: "
             f"{tool_name}"
-        )
-
-    async def execute_rclone_search(
-        self,
-        step: dict[str, Any]
-    ) -> str:
-        try:
-            keyword = (
-                step.get(
-                    "keyword",
-                    ""
-                )
-            )
-
-            if not keyword:
-                return (
-                    "No search keyword "
-                    "was provided."
-                )
-
-            logger.info(
-                "Searching rclone "
-                "metadata keyword=%s",
-                keyword
-            )
-
-            results = await (
-                self.rclone_repository
-                .search_files(
-                    keyword=keyword
-                )
-            )
-
-            if not results:
-                messages = [
-                    {
-                        "role": "system",
-                        "content": (
-                            RCLONE_SUMMARY_PROMPT
-                        )
-                    },
-                    {
-                        "role": "user",
-                        "content": (
-                            f"No files found "
-                            f"for keyword: "
-                            f"{keyword}"
-                        )
-                    }
-                ]
-
-                return await (
-                    self.provider
-                    .generate_response(
-                        messages=messages,
-                        temperature=0.3
-                    )
-                )
-
-            raw_result_text = ""
-
-            for index, item in enumerate(
-                results,
-                start=1
-            ):
-                remote_name = (
-                    item.get(
-                        "remote_name",
-                        "Unknown"
-                    )
-                )
-
-                file_name = (
-                    item.get(
-                        "file_name",
-                        "Unknown"
-                    )
-                )
-
-                file_path = (
-                    item.get(
-                        "file_path",
-                        "Unknown"
-                    )
-                )
-
-                file_size = (
-                    item.get(
-                        "file_size",
-                        0
-                    )
-                )
-
-                raw_result_text += (
-                    f"\n\n"
-                    f"Result {index}\n"
-                    f"Remote: "
-                    f"{remote_name}\n"
-                    f"File Name: "
-                    f"{file_name}\n"
-                    f"Path: "
-                    f"{file_path}\n"
-                    f"Size: "
-                    f"{file_size} bytes"
-                )
-
-            summary_messages = [
-                {
-                    "role": "system",
-                    "content": (
-                        RCLONE_SUMMARY_PROMPT
-                    )
-                },
-                {
-                    "role": "user",
-                    "content": raw_result_text
-                }
-            ]
-
-            summarized = await (
-                self.provider
-                .generate_response(
-                    messages=summary_messages,
-                    temperature=0.4
-                )
-            )
-
-            return summarized
-
-        except Exception as exc:
-            logger.exception(
-                "RClone search failed: %s",
-                exc
-            )
-
-            return (
-                "Unable to search "
-                "cloud storage files "
-                "right now."
-            )
-
-    async def execute_email_summary(
-        self,
-        telegram_user_id: int
-    ) -> str:
-        try:
-            mail_settings = await (
-                plugin_service
-                .load_mail_settings(
-                    telegram_user_id
-                )
-            )
-
-            if not mail_settings:
-                return (
-                    "Mail settings are "
-                    "not configured."
-                )
-
-            inbox_id = (
-                mail_settings.get(
-                    "inbox_id"
-                )
-            )
-
-            host = (
-                mail_settings.get(
-                    "host"
-                )
-            )
-
-            email_address = (
-                mail_settings.get(
-                    "email"
-                )
-            )
-
-            password = (
-                mail_settings.get(
-                    "password"
-                )
-            )
-
-            emails = await (
-                inbox_service.fetch_emails(
-                    telegram_user_id=(
-                        telegram_user_id
-                    ),
-                    inbox_id=inbox_id,
-                    host=host,
-                    email=email_address,
-                    password=password,
-                    unread_only=True,
-                    limit=10
-                )
-            )
-
-            if not emails:
-                return (
-                    "No unread emails "
-                    "were found."
-                )
-
-            email_text = ""
-
-            for index, email_data in enumerate(
-                emails,
-                start=1
-            ):
-                sender = (
-                    email_data.get(
-                        "from",
-                        "Unknown"
-                    )
-                )
-
-                subject = (
-                    email_data.get(
-                        "subject",
-                        "No Subject"
-                    )
-                )
-
-                body = (
-                    email_data.get(
-                        "body",
-                        ""
-                    )
-                )
-
-                email_text += (
-                    f"\n\n"
-                    f"Email {index}\n"
-                    f"From: {sender}\n"
-                    f"Subject: {subject}\n"
-                    f"Body: {body[:2500]}"
-                )
-
-            summary_messages = [
-                {
-                    "role": "system",
-                    "content": (
-                        EMAIL_SUMMARY_PROMPT
-                    )
-                },
-                {
-                    "role": "user",
-                    "content": email_text
-                }
-            ]
-
-            summarized = await (
-                self.provider.generate_response(
-                    messages=summary_messages,
-                    temperature=0.4
-                )
-            )
-
-            return summarized
-
-        except Exception as exc:
-            logger.exception(
-                "Email summary failed: %s",
-                exc
-            )
-
-            return (
-                "Unable to check "
-                "emails right now."
-            )
-
-    async def execute_ai_task(
-        self,
-        original_message: str,
-        workflow_context: str,
-        task_step: dict[str, Any]
-    ) -> str:
-        task_name = (
-            task_step.get(
-                "task",
-                "summarize"
-            )
-        )
-
-        language = (
-            task_step.get(
-                "language",
-                "same"
-            )
-        )
-
-        task_prompt = [
-            {
-                "role": "system",
-                "content": SUMMARY_PROMPT
-            },
-            {
-                "role": "user",
-                "content": (
-                    f"Original Request:\n"
-                    f"{original_message}\n\n"
-                    f"Task:\n"
-                    f"{task_name}\n\n"
-                    f"Language:\n"
-                    f"{language}\n\n"
-                    f"Workflow Context:\n"
-                    f"{workflow_context}"
-                )
-            }
-        ]
-
-        return await (
-            self.provider.generate_response(
-                messages=task_prompt,
-                temperature=0.4
-            )
         )
 
     async def execute_web_search(
         self,
         step: dict[str, Any]
     ) -> str:
+        query = (
+            step.get(
+                "query",
+                ""
+            )
+        )
+
+        if not query:
+            return (
+                "Search query missing."
+            )
+
         plugin = (
             plugin_loader.get_plugin(
                 "websearch"
@@ -977,15 +574,8 @@ class AIService:
         if plugin is None:
             return (
                 "Web search plugin "
-                "is unavailable."
+                "not available."
             )
-
-        query = (
-            step.get(
-                "query",
-                ""
-            )
-        )
 
         result = await plugin.search(
             query=query
@@ -997,6 +587,18 @@ class AIService:
         self,
         step: dict[str, Any]
     ) -> str:
+        city = (
+            step.get(
+                "city",
+                ""
+            )
+        )
+
+        if not city:
+            return (
+                "City parameter missing."
+            )
+
         plugin = (
             plugin_loader.get_plugin(
                 "weather"
@@ -1006,15 +608,8 @@ class AIService:
         if plugin is None:
             return (
                 "Weather plugin "
-                "is unavailable."
+                "not available."
             )
-
-        city = (
-            step.get(
-                "city",
-                ""
-            )
-        )
 
         result = await (
             plugin.get_weather(
@@ -1031,25 +626,19 @@ class AIService:
             psutil.virtual_memory()
         )
 
-        cpu_usage = (
-            psutil.cpu_percent(
-                interval=1
-            )
+        cpu = psutil.cpu_percent(
+            interval=1
         )
 
         disk = psutil.disk_usage(
             "/"
         )
 
-        boot_time = datetime.fromtimestamp(
-            psutil.boot_time()
-        )
-
         plugins = (
             plugin_loader.list_plugins()
         )
 
-        plugin_names = [
+        enabled_plugins = [
             plugin["name"]
             for plugin in plugins
             if plugin["enabled"]
@@ -1061,26 +650,297 @@ class AIService:
             f"{platform.system()} "
             f"{platform.release()}\n"
             f"CPU Usage: "
-            f"{cpu_usage}%\n"
+            f"{cpu}%\n"
             f"RAM Usage: "
             f"{memory.percent}%\n"
-            f"Available RAM: "
-            f"{round(memory.available / 1024 / 1024)} MB\n"
             f"Disk Usage: "
             f"{disk.percent}%\n"
-            f"Python Version: "
+            f"Python: "
             f"{platform.python_version()}\n"
-            f"Boot Time: "
-            f"{boot_time}\n"
-            f"Loaded Plugins: "
-            f"{', '.join(plugin_names)}\n"
-            f"AI Provider: "
-            f"{os.getenv('AI_PROVIDER')}"
+            f"Plugins: "
+            f"{', '.join(enabled_plugins)}\n"
+            f"Time: "
+            f"{datetime.utcnow()}"
+        )
+
+    async def execute_email_summary(
+        self,
+        telegram_user_id: int
+    ) -> str:
+        try:
+            settings = await (
+                plugin_service
+                .load_mail_settings(
+                    telegram_user_id
+                )
+            )
+
+            if not settings:
+                return (
+                    "Mail settings are "
+                    "not configured."
+                )
+
+            emails = await (
+                inbox_service.fetch_emails(
+                    telegram_user_id=(
+                        telegram_user_id
+                    ),
+                    inbox_id=(
+                        settings.get(
+                            "inbox_id"
+                        )
+                    ),
+                    host=(
+                        settings.get(
+                            "host"
+                        )
+                    ),
+                    email=(
+                        settings.get(
+                            "email"
+                        )
+                    ),
+                    password=(
+                        settings.get(
+                            "password"
+                        )
+                    ),
+                    unread_only=True,
+                    limit=10
+                )
+            )
+
+            if not emails:
+                return (
+                    "No unread emails "
+                    "were found."
+                )
+
+            raw_email_text = ""
+
+            for index, item in enumerate(
+                emails,
+                start=1
+            ):
+                sender = (
+                    item.get(
+                        "from",
+                        "Unknown"
+                    )
+                )
+
+                subject = (
+                    item.get(
+                        "subject",
+                        "No Subject"
+                    )
+                )
+
+                body = (
+                    item.get(
+                        "body",
+                        ""
+                    )
+                )
+
+                body = body[
+                    :self.max_email_body_chars
+                ]
+
+                raw_email_text += (
+                    f"\n\n"
+                    f"Email {index}\n"
+                    f"From: {sender}\n"
+                    f"Subject: {subject}\n"
+                    f"Body: {body}"
+                )
+
+            summary_messages = [
+                {
+                    "role": "system",
+                    "content": (
+                        EMAIL_SUMMARY_PROMPT
+                    )
+                },
+                {
+                    "role": "user",
+                    "content": raw_email_text
+                }
+            ]
+
+            summarized = await (
+                self.provider.generate_response(
+                    messages=summary_messages,
+                    temperature=0.4
+                )
+            )
+
+            del emails
+            del raw_email_text
+            del summary_messages
+
+            gc.collect()
+
+            return summarized
+
+        except Exception as exc:
+            logger.exception(
+                "Email summary failed: %s",
+                exc
+            )
+
+            return (
+                "Unable to fetch emails "
+                "right now."
+            )
+
+    async def execute_rclone_search(
+        self,
+        step: dict[str, Any]
+    ) -> str:
+        try:
+            keyword = (
+                step.get(
+                    "keyword",
+                    ""
+                )
+            )
+
+            if not keyword:
+                return (
+                    "Storage search keyword "
+                    "missing."
+                )
+
+            results = await (
+                self.rclone_repository
+                .search_files(
+                    keyword=keyword
+                )
+            )
+
+            if not results:
+                return (
+                    "No matching files "
+                    "were found."
+                )
+
+            raw_result_text = ""
+
+            for index, item in enumerate(
+                results,
+                start=1
+            ):
+                raw_result_text += (
+                    f"\n\n"
+                    f"Result {index}\n"
+                    f"Remote: "
+                    f"{item.get('remote_name')}\n"
+                    f"File: "
+                    f"{item.get('file_name')}\n"
+                    f"Path: "
+                    f"{item.get('file_path')}\n"
+                    f"Size: "
+                    f"{item.get('file_size')}"
+                )
+
+            messages = [
+                {
+                    "role": "system",
+                    "content": (
+                        RCLONE_SUMMARY_PROMPT
+                    )
+                },
+                {
+                    "role": "user",
+                    "content": raw_result_text
+                }
+            ]
+
+            summarized = await (
+                self.provider.generate_response(
+                    messages=messages,
+                    temperature=0.3
+                )
+            )
+
+            del results
+            del raw_result_text
+            del messages
+
+            gc.collect()
+
+            return summarized
+
+        except Exception as exc:
+            logger.exception(
+                "Rclone search failed: %s",
+                exc
+            )
+
+            return (
+                "Unable to search "
+                "cloud storage right now."
+            )
+
+    async def summarize_context(
+        self,
+        workflow_context: str
+    ) -> str:
+        messages = [
+            {
+                "role": "system",
+                "content": SUMMARY_PROMPT
+            },
+            {
+                "role": "user",
+                "content": workflow_context
+            }
+        ]
+
+        return await (
+            self.provider.generate_response(
+                messages=messages,
+                temperature=0.4
+            )
+        )
+
+    async def generate_chat_response(
+        self,
+        memory_context: list[
+            dict[str, str]
+        ],
+        message: str
+    ) -> str:
+        messages = [
+            {
+                "role": "system",
+                "content": SYSTEM_PROMPT
+            }
+        ]
+
+        messages.extend(
+            memory_context
+        )
+
+        messages.append(
+            {
+                "role": "user",
+                "content": message
+            }
+        )
+
+        return await (
+            self.provider.generate_response(
+                messages=messages,
+                temperature=0.7
+            )
         )
 
     async def generate_final_response(
         self,
-        original_user_message: str,
+        original_message: str,
         workflow_context: str
     ) -> str:
         messages = [
@@ -1091,38 +951,63 @@ class AIService:
             {
                 "role": "user",
                 "content": (
-                    f"Original User Request:\n"
-                    f"{original_user_message}\n\n"
+                    f"Original Request:\n"
+                    f"{original_message}\n\n"
                     f"Workflow Results:\n"
-                    f"{workflow_context}\n\n"
-                    f"Generate final "
-                    f"human-friendly reply."
+                    f"{workflow_context}"
                 )
             }
         ]
 
-        try:
-            return await (
-                self.provider.generate_response(
-                    messages=messages,
-                    temperature=0.5
+        return await (
+            self.provider.generate_response(
+                messages=messages,
+                temperature=0.4
+            )
+        )
+
+    async def get_memory_context(
+        self,
+        telegram_user_id: int
+    ) -> list[dict[str, str]]:
+        history = await (
+            chat_memory_repository
+            .get_recent_history(
+                telegram_user_id=(
+                    telegram_user_id
+                ),
+                limit=(
+                    self.max_history_messages
                 )
             )
+        )
 
-        except Exception as exc:
-            logger.exception(
-                "Final response "
-                "failed: %s",
-                exc
+        context_messages = []
+
+        for item in history:
+            content = (
+                item.get(
+                    "content",
+                    ""
+                ).strip()
             )
 
-            return (
-                "⚠️ Workflow partially "
-                "completed but final "
-                "response generation failed."
+            if not content:
+                continue
+
+            context_messages.append(
+                {
+                    "role": item.get(
+                        "role",
+                        "user"
+                    ),
+                    "content": content
+                }
             )
 
-    async def store_conversation_pair(
+        return context_messages
+
+    async def store_conversation(
         self,
         telegram_user_id: int,
         user_message: str,
@@ -1154,7 +1039,7 @@ class AIService:
         except Exception:
             logger.exception(
                 "Failed to store "
-                "chat memory"
+                "conversation"
             )
 
     async def clear_memory(
@@ -1178,23 +1063,22 @@ class AIService:
         self,
         user_message: str
     ) -> str:
-        messages = [
-            {
-                "role": "system",
-                "content": SUMMARY_PROMPT
-            },
-            {
-                "role": "user",
-                "content": (
-                    "Generate a friendly "
-                    "AI assistant error "
-                    f"reply for:\n"
-                    f"{user_message}"
-                )
-            }
-        ]
-
         try:
+            messages = [
+                {
+                    "role": "system",
+                    "content": SUMMARY_PROMPT
+                },
+                {
+                    "role": "user",
+                    "content": (
+                        "Generate a friendly "
+                        "assistant error reply "
+                        f"for:\n{user_message}"
+                    )
+                }
+            ]
+
             return await (
                 self.provider.generate_response(
                     messages=messages,
