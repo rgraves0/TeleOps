@@ -1,52 +1,25 @@
 from __future__ import annotations
 
 import logging
-import os
+from typing import Any
 
 from apscheduler.schedulers.asyncio import (
     AsyncIOScheduler,
 )
-from apscheduler.triggers.date import DateTrigger
-from dotenv import load_dotenv
-from telegram.ext import Application
-
-load_dotenv()
+from apscheduler.triggers.date import (
+    DateTrigger,
+)
 
 logger = logging.getLogger(__name__)
 
 
-class SchedulerManager:
-    def __init__(self):
-        self.timezone = os.getenv(
-            "SCHEDULER_TIMEZONE",
-            "Asia/Bangkok"
-        )
-
-        self.scheduler = AsyncIOScheduler(
-            timezone=self.timezone
-        )
-
-        self.application: (
-            Application | None
-        ) = None
+class SchedulerService:
+    def __init__(self) -> None:
+        self.scheduler = AsyncIOScheduler()
 
         self.started = False
 
-    def attach_application(
-        self,
-        application: Application
-    ) -> None:
-        self.application = application
-
-    def get_bot(self):
-        if self.application is None:
-            raise RuntimeError(
-                "Telegram application is not attached"
-            )
-
-        return self.application.bot
-
-    def start(self) -> None:
+    async def start(self) -> None:
         if self.started:
             return
 
@@ -72,58 +45,78 @@ class SchedulerManager:
             "AsyncIOScheduler stopped"
         )
 
-    def add_job(
+    async def add_job(
         self,
-        job_id: str,
         func,
         run_date,
-        kwargs: dict | None = None
+        args: list[Any] | None = None,
+        kwargs: dict[str, Any] | None = None,
+        job_id: str | None = None,
+        replace_existing: bool = True
     ) -> None:
-        existing_job = (
-            self.scheduler.get_job(job_id)
-        )
+        if args is None:
+            args = []
 
-        if existing_job:
-            self.scheduler.remove_job(
-                job_id
-            )
+        if kwargs is None:
+            kwargs = {}
 
         self.scheduler.add_job(
             func=func,
             trigger=DateTrigger(
                 run_date=run_date
             ),
+            args=args,
+            kwargs=kwargs,
             id=job_id,
-            kwargs=kwargs or {},
-            replace_existing=True,
-            misfire_grace_time=300
+            replace_existing=(
+                replace_existing
+            )
         )
 
         logger.info(
-            "Scheduled job: %s",
-            job_id
+            "Scheduled job added "
+            "job_id=%s run_date=%s",
+            job_id,
+            run_date
         )
 
-    def remove_job(
+    async def remove_job(
         self,
         job_id: str
     ) -> None:
-        job = self.scheduler.get_job(
-            job_id
-        )
-
-        if job:
+        try:
             self.scheduler.remove_job(
                 job_id
             )
 
             logger.info(
-                "Removed job: %s",
+                "Scheduled job removed "
+                "job_id=%s",
                 job_id
             )
 
-    def list_jobs(self):
+        except Exception:
+            logger.exception(
+                "Failed to remove "
+                "job_id=%s",
+                job_id
+            )
+
+    async def get_jobs(
+        self
+    ):
         return self.scheduler.get_jobs()
 
+    async def attach_application(
+        self,
+        application
+    ) -> None:
+        self.application = application
 
-scheduler_manager = SchedulerManager()
+        logger.info(
+            "Telegram application "
+            "attached to scheduler"
+        )
+
+
+scheduler_service = SchedulerService()
