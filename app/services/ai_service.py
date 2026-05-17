@@ -33,7 +33,7 @@ from app.services.inbox_service import (
     InboxService,
 )
 from app.services.plugin_service import (
-    plugin_service,
+    PluginService,
 )
 
 logger = logging.getLogger(__name__)
