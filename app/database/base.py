@@ -1,166 +1,75 @@
 from __future__ import annotations
 
-import json
-from pathlib import Path
-from typing import AsyncGenerator
+import logging
+import os
 
 import aiosqlite
 
-from app.database.models import (
-    CREATE_AUDIT_LOGS_TABLE,
-    CREATE_INDEXES,
-    CREATE_INBOXES_TABLE,
-    CREATE_REMINDERS_TABLE,
-    CREATE_ROLES_TABLE,
-    CREATE_USER_INBOXES_TABLE,
-    CREATE_USERS_TABLE,
-    DEFAULT_ROLES,
+logger = logging.getLogger(__name__)
+
+DATABASE_PATH = os.getenv(
+    "DATABASE_PATH",
+    "data/teleops.db"
 )
 
-DATABASE_PATH = Path("data/teleops.db")
-
-
-class DatabaseManager:
-    def __init__(self, db_path: Path):
-        self.db_path = db_path
-        self._connection: aiosqlite.Connection | None = None
-
-    async def connect(self) -> None:
-        if self._connection is None:
-            self.db_path.parent.mkdir(parents=True, exist_ok=True)
-
-            self._connection = await aiosqlite.connect(
-                self.db_path.as_posix()
-            )
-
-            self._connection.row_factory = aiosqlite.Row
-
-            await self._connection.execute(
-                "PRAGMA foreign_keys = ON;"
-            )
-
-            await self._connection.execute(
-                "PRAGMA journal_mode = WAL;"
-            )
-
-            await self._connection.execute(
-                "PRAGMA synchronous = NORMAL;"
-            )
-
-            await self._connection.commit()
-
-    async def disconnect(self) -> None:
-        if self._connection:
-            await self._connection.close()
-            self._connection = None
-
-    async def get_connection(self) -> aiosqlite.Connection:
-        if self._connection is None:
-            await self.connect()
-
-        return self._connection
-
-    async def execute(
-        self,
-        query: str,
-        parameters: tuple = ()
-    ) -> None:
-        connection = await self.get_connection()
-
-        await connection.execute(query, parameters)
-        await connection.commit()
-
-    async def fetch_one(
-        self,
-        query: str,
-        parameters: tuple = ()
-    ):
-        connection = await self.get_connection()
-
-        cursor = await connection.execute(query, parameters)
-        row = await cursor.fetchone()
-
-        await cursor.close()
-
-        return row
-
-    async def fetch_all(
-        self,
-        query: str,
-        parameters: tuple = ()
-    ):
-        connection = await self.get_connection()
-
-        cursor = await connection.execute(query, parameters)
-        rows = await cursor.fetchall()
-
-        await cursor.close()
-
-        return rows
-
-
-db = DatabaseManager(DATABASE_PATH)
+_database_connection = None
 
 
 async def init_db() -> None:
-    connection = await db.get_connection()
+    global _database_connection
 
-    await connection.execute(CREATE_ROLES_TABLE)
-    await connection.execute(CREATE_USERS_TABLE)
-    await connection.execute(CREATE_INBOXES_TABLE)
-    await connection.execute(CREATE_REMINDERS_TABLE)
-    await connection.execute(CREATE_AUDIT_LOGS_TABLE)
-    await connection.execute(CREATE_USER_INBOXES_TABLE)
+    os.makedirs(
+        os.path.dirname(
+            DATABASE_PATH
+        ),
+        exist_ok=True
+    )
 
-    for query in CREATE_INDEXES:
-        await connection.execute(query)
-
-    await connection.commit()
-
-    await seed_default_roles()
-
-
-async def seed_default_roles() -> None:
-    connection = await db.get_connection()
-
-    for role in DEFAULT_ROLES:
-        cursor = await connection.execute(
-            """
-            SELECT id
-            FROM roles
-            WHERE name = ?
-            """,
-            (role["name"],)
-        )
-
-        existing_role = await cursor.fetchone()
-
-        if existing_role:
-            continue
-
-        await connection.execute(
-            """
-            INSERT INTO roles (
-                name,
-                description,
-                permissions
-            )
-            VALUES (?, ?, ?)
-            """,
-            (
-                role["name"],
-                role["description"],
-                json.dumps(role["permissions"])
+    if _database_connection is None:
+        _database_connection = (
+            await aiosqlite.connect(
+                DATABASE_PATH
             )
         )
 
-    await connection.commit()
+        _database_connection.row_factory = (
+            aiosqlite.Row
+        )
+
+        await _database_connection.execute(
+            "PRAGMA journal_mode=WAL;"
+        )
+
+        await _database_connection.execute(
+            "PRAGMA foreign_keys=ON;"
+        )
+
+        await _database_connection.commit()
+
+        logger.info(
+            "Database initialized "
+            "path=%s",
+            DATABASE_PATH
+        )
 
 
-async def get_db() -> AsyncGenerator[aiosqlite.Connection, None]:
-    connection = await db.get_connection()
+async def get_db():
+    global _database_connection
 
-    try:
-        yield connection
-    finally:
-        pass
+    if _database_connection is None:
+        await init_db()
+
+    return _database_connection
+
+
+async def close_database() -> None:
+    global _database_connection
+
+    if _database_connection is not None:
+        await _database_connection.close()
+
+        _database_connection = None
+
+        logger.info(
+            "Database connection closed"
+        )
