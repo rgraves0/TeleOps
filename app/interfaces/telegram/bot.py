@@ -8,8 +8,6 @@ from telegram import Update
 from telegram.ext import (
     Application,
     ContextTypes,
-    MessageHandler,
-    filters,
 )
 
 from app.database.base import (
@@ -54,6 +52,10 @@ class TelegramBot:
             .build()
         )
 
+        self.original_process_update = (
+            self.application.process_update
+        )
+
     async def startup(self) -> None:
         logger.info(
             "Telegram bot startup completed"
@@ -93,17 +95,37 @@ class TelegramBot:
                         "error message"
                     )
 
-    def setup(self) -> None:
-        self.application.add_handler(
-            MessageHandler(
-                filters.ALL,
-                auth_middleware
-            ),
-            group=-1
+    async def process_update_with_auth(
+        self,
+        update: Update
+    ) -> None:
+        context = (
+            self.application.context_types.context.from_update(
+                update,
+                self.application
+            )
         )
 
+        try:
+            await auth_middleware(
+                update,
+                context
+            )
+
+        except Exception:
+            return
+
+        await self.original_process_update(
+            update
+        )
+
+    def setup(self) -> None:
         register_handlers(
             self.application
+        )
+
+        self.application.process_update = (
+            self.process_update_with_auth
         )
 
         self.application.add_error_handler(
