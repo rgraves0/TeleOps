@@ -6,6 +6,7 @@ import signal
 from contextlib import suppress
 
 from dotenv import load_dotenv
+from telegram import Update
 
 from app.core.scheduler import (
     scheduler_manager,
@@ -65,7 +66,10 @@ class TeleOpsApplication:
 
         await init_db()
 
-        await self.rclone_repository.initialize_table()
+        await (
+            self.rclone_repository
+            .initialize_table()
+        )
 
         logger.info(
             "Database initialized"
@@ -83,23 +87,29 @@ class TeleOpsApplication:
 
         for plugin in plugins:
             logger.info(
-                "Plugin: %s | enabled=%s",
+                "Plugin loaded | "
+                "name=%s | enabled=%s",
                 plugin["name"],
                 plugin["enabled"]
             )
 
         logger.info(
-            "Starting scheduler..."
+            "Attaching Telegram application "
+            "to scheduler..."
         )
 
         scheduler_manager.attach_application(
             self.bot.application
         )
 
+        logger.info(
+            "Starting scheduler..."
+        )
+
         scheduler_manager.start()
 
         logger.info(
-            "Restoring reminder jobs..."
+            "Restoring scheduled reminders..."
         )
 
         await (
@@ -108,12 +118,12 @@ class TeleOpsApplication:
         )
 
         logger.info(
-            "System initialization completed"
+            "Application initialization completed"
         )
 
     async def start_bot(self) -> None:
         logger.info(
-            "Starting Telegram bot..."
+            "Configuring Telegram bot..."
         )
 
         self.bot.setup()
@@ -122,16 +132,34 @@ class TeleOpsApplication:
             self.bot.application
         )
 
+        logger.info(
+            "Initializing Telegram application..."
+        )
+
         await application.initialize()
+
+        logger.info(
+            "Starting Telegram application..."
+        )
 
         await application.start()
 
+        logger.info(
+            "Starting Telegram polling..."
+        )
+
+        if application.updater is None:
+            raise RuntimeError(
+                "Telegram updater is unavailable"
+            )
+
         await application.updater.start_polling(
-            allowed_updates=Update.ALL_TYPES
+            allowed_updates=Update.ALL_TYPES,
+            drop_pending_updates=False
         )
 
         logger.info(
-            "Telegram bot polling started"
+            "Telegram bot is now online"
         )
 
     async def stop_bot(self) -> None:
@@ -140,38 +168,51 @@ class TeleOpsApplication:
         )
 
         logger.info(
-            "Stopping Telegram bot..."
+            "Stopping Telegram polling..."
+        )
+
+        if application.updater:
+            with suppress(Exception):
+                await application.updater.stop()
+
+        logger.info(
+            "Stopping Telegram application..."
         )
 
         with suppress(Exception):
-            await application.updater.stop()
-
-        with suppress(Exception):
             await application.stop()
+
+        logger.info(
+            "Shutting down Telegram application..."
+        )
 
         with suppress(Exception):
             await application.shutdown()
 
     async def shutdown(self) -> None:
         logger.info(
-            "Graceful shutdown started..."
+            "Graceful shutdown initiated..."
         )
 
         await self.stop_bot()
 
+        logger.info(
+            "Stopping scheduler..."
+        )
+
         await scheduler_manager.shutdown()
+
+        logger.info(
+            "Disconnecting database..."
+        )
 
         await db.disconnect()
 
         logger.info(
-            "Database disconnected"
+            "TeleOps-AI shutdown completed"
         )
 
-        logger.info(
-            "Shutdown complete"
-        )
-
-    def _register_signal_handlers(
+    def register_signal_handlers(
         self
     ) -> None:
         loop = asyncio.get_running_loop()
@@ -186,17 +227,21 @@ class TeleOpsApplication:
             )
 
     async def run(self) -> None:
-        self._register_signal_handlers()
+        self.register_signal_handlers()
 
         await self.initialize()
 
         await self.start_bot()
 
         logger.info(
-            "TeleOps-AI is running"
+            "TeleOps-AI fully operational"
         )
 
         await self.shutdown_event.wait()
+
+        logger.info(
+            "Shutdown signal received"
+        )
 
         await self.shutdown()
 
@@ -209,6 +254,13 @@ async def main() -> None:
     try:
         await application.run()
 
+    except KeyboardInterrupt:
+        logger.warning(
+            "Keyboard interrupt received"
+        )
+
+        await application.shutdown()
+
     except Exception:
         logger.exception(
             "Fatal application error"
@@ -218,6 +270,4 @@ async def main() -> None:
 
 
 if __name__ == "__main__":
-    from telegram import Update
-
     asyncio.run(main())
