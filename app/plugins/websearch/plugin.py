@@ -70,7 +70,7 @@ async def search(
 
     simplified_results = []
 
-    for item in organic_results[:5]:
+    for item in organic_results[:3]:
 
         simplified_results.append(
             {
