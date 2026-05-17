@@ -233,17 +233,10 @@ RULES:
 class AIService:
 
     def __init__(self):
-
         self.provider = AIProvider()
-
         self.max_history_messages = 6
-
         self.max_email_body_chars = 500
-
-        self.rclone_repository = (
-            RcloneMetaRepository()
-        )
-
+        self.rclone_repository = RcloneMetaRepository()
         self.inbox_service = InboxService()
 
     async def process_user_message(
@@ -251,17 +244,12 @@ class AIService:
         telegram_user_id: int,
         message: str
     ) -> dict[str, Any]:
-
         memory_context = []
-
         workflow = {}
-
         workflow_context = ""
-
         executed_steps = []
 
         try:
-
             memory_context = (
                 await self.get_memory_context(
                     telegram_user_id
@@ -283,7 +271,6 @@ class AIService:
             )
 
             if not workflow_steps:
-
                 response = await (
                     self.generate_chat_response(
                         memory_context=memory_context,
@@ -304,11 +291,7 @@ class AIService:
 
             first_step = workflow_steps[0]
 
-            if (
-                first_step.get("type")
-                == "chat"
-            ):
-
+            if first_step.get("type") == "chat":
                 response = await (
                     self.generate_chat_response(
                         memory_context=memory_context,
@@ -328,9 +311,7 @@ class AIService:
                 }
 
             for step in workflow_steps:
-
                 try:
-
                     result = await (
                         self.execute_workflow_step(
                             telegram_user_id=telegram_user_id,
@@ -353,7 +334,6 @@ class AIService:
                     )
 
                 except Exception as exc:
-
                     logger.exception(
                         "Workflow step failed: %s",
                         exc
@@ -385,28 +365,22 @@ class AIService:
             }
 
         except Exception as exc:
-
             logger.exception(
                 "AIService failed: %s",
                 exc
             )
-
+            
+            # =========================================================
+            # FIXED: Corrected indentation logic inside the except block
+            # =========================================================
             error_text = str(exc)
-
-if "rate_limit" in error_text.lower():
-
-    fallback = (
-        "⚠️ AI service is busy right now.\n\n"
-        "Please wait 20-30 seconds and try again."
-    )
-
-else:
-
-    fallback = await (
-        self.generate_friendly_error(
-            message
-        )
-    )
+            if "rate_limit" in error_text.lower():
+                fallback = (
+                    "⚠️ AI service is busy right now.\n\n"
+                    "Please wait 20-30 seconds and try again."
+                )
+            else:
+                fallback = await self.generate_friendly_error(message)
 
             await self.store_conversation(
                 telegram_user_id,
@@ -420,12 +394,10 @@ else:
             }
 
         finally:
-
             del memory_context
             del workflow
             del workflow_context
             del executed_steps
-
             gc.collect()
 
     async def generate_workflow(
@@ -435,7 +407,6 @@ else:
             dict[str, str]
         ]
     ) -> dict[str, Any]:
-
         router_messages = [
             {
                 "role": "system",
@@ -467,7 +438,6 @@ else:
         )
 
         try:
-
             parsed = json.loads(
                 raw_response
             )
@@ -483,7 +453,6 @@ else:
             return parsed
 
         except Exception:
-
             logger.exception(
                 "Workflow parse failed"
             )
@@ -503,10 +472,7 @@ else:
         step: dict[str, Any],
         workflow_context: str
     ) -> str:
-
-        step_type = (
-            step.get("type")
-        )
+        step_type = step.get("type")
 
         if step_type == "tool":
             return await (
@@ -530,10 +496,7 @@ else:
         telegram_user_id: int,
         step: dict[str, Any]
     ) -> str:
-
-        tool_name = (
-            step.get("tool")
-        )
+        tool_name = step.get("tool")
 
         if tool_name == "web_search":
             return await (
@@ -580,83 +543,41 @@ else:
         self,
         step: dict[str, Any]
     ) -> str:
-
-        query = (
-            step.get(
-                "query",
-                ""
-            )
-        )
+        query = step.get("query", "")
 
         if not query:
             return "Search query missing."
 
-        plugin = (
-            plugin_loader.get_plugin(
-                "websearch"
-            )
-        )
-
+        plugin = plugin_loader.get_plugin("websearch")
         if plugin is None:
             return "Web search plugin not available."
 
-        result = await plugin.search(
-            query=query
-        )
-
+        result = await plugin.search(query=query)
         return str(result)
 
     async def execute_weather(
         self,
         step: dict[str, Any]
     ) -> str:
-
-        city = (
-            step.get(
-                "city",
-                ""
-            )
-        )
+        city = step.get("city", "")
 
         if not city:
             return "City parameter missing."
 
-        plugin = (
-            plugin_loader.get_plugin(
-                "weather"
-            )
-        )
-
+        plugin = plugin_loader.get_plugin("weather")
         if plugin is None:
             return "Weather plugin not available."
 
-        result = await (
-            plugin.get_weather(
-                city
-            )
-        )
-
+        result = await plugin.get_weather(city)
         return str(result)
 
     async def execute_system_status(
         self
     ) -> str:
-
-        memory = (
-            psutil.virtual_memory()
-        )
-
-        cpu = psutil.cpu_percent(
-            interval=1
-        )
-
-        disk = psutil.disk_usage(
-            "/"
-        )
-
-        plugins = (
-            plugin_loader.list_plugins()
-        )
+        memory = psutil.virtual_memory()
+        cpu = psutil.cpu_percent(interval=1)
+        disk = psutil.disk_usage("/")
+        plugins = plugin_loader.list_plugins()
 
         enabled_plugins = [
             plugin["name"]
@@ -679,9 +600,7 @@ else:
         self,
         telegram_user_id: int
     ) -> str:
-
         try:
-
             settings = await (
                 plugin_service.load_mail_settings(
                     telegram_user_id
@@ -689,9 +608,7 @@ else:
             )
 
             if not settings:
-                return (
-                    "Mail settings are not configured."
-                )
+                return "Mail settings are not configured."
 
             emails = await (
                 self.inbox_service.fetch_emails(
@@ -706,41 +623,14 @@ else:
             )
 
             if not emails:
-                return (
-                    "No unread emails were found."
-                )
+                return "No unread emails were found."
 
             raw_email_text = ""
-
-            for index, item in enumerate(
-                emails,
-                start=1
-            ):
-
-                sender = (
-                    item.get(
-                        "from",
-                        "Unknown"
-                    )
-                )
-
-                subject = (
-                    item.get(
-                        "subject",
-                        "No Subject"
-                    )
-                )
-
-                body = (
-                    item.get(
-                        "body",
-                        ""
-                    )
-                )
-
-                body = body[
-                    :self.max_email_body_chars
-                ]
+            for index, item in enumerate(emails, start=1):
+                sender = item.get("from", "Unknown")
+                subject = item.get("subject", "No Subject")
+                body = item.get("body", "")
+                body = body[:self.max_email_body_chars]
 
                 raw_email_text += (
                     f"\n\n"
@@ -771,34 +661,21 @@ else:
             return summarized
 
         except Exception as exc:
-
             logger.exception(
                 "Email summary failed: %s",
                 exc
             )
-
-            return (
-                "Unable to fetch emails right now."
-            )
+            return "Unable to fetch emails right now."
 
     async def execute_rclone_search(
         self,
         step: dict[str, Any]
     ) -> str:
-
         try:
-
-            keyword = (
-                step.get(
-                    "keyword",
-                    ""
-                )
-            )
+            keyword = step.get("keyword", "")
 
             if not keyword:
-                return (
-                    "Storage search keyword missing."
-                )
+                return "Storage search keyword missing."
 
             results = await (
                 self.rclone_repository.search_files(
@@ -807,17 +684,10 @@ else:
             )
 
             if not results:
-                return (
-                    "No matching files were found."
-                )
+                return "No matching files were found."
 
             raw_result_text = ""
-
-            for index, item in enumerate(
-                results,
-                start=1
-            ):
-
+            for index, item in enumerate(results, start=1):
                 raw_result_text += (
                     f"\n\n"
                     f"Result {index}\n"
@@ -848,21 +718,16 @@ else:
             return summarized
 
         except Exception as exc:
-
             logger.exception(
                 "Rclone search failed: %s",
                 exc
             )
-
-            return (
-                "Unable to search cloud storage right now."
-            )
+            return "Unable to search cloud storage right now."
 
     async def summarize_context(
         self,
         workflow_context: str
     ) -> str:
-
         messages = [
             {
                 "role": "system",
@@ -888,7 +753,6 @@ else:
         ],
         message: str
     ) -> str:
-
         messages = [
             {
                 "role": "system",
@@ -896,10 +760,7 @@ else:
             }
         ]
 
-        messages.extend(
-            memory_context
-        )
-
+        messages.extend(memory_context)
         messages.append(
             {
                 "role": "user",
@@ -919,7 +780,6 @@ else:
         original_message: str,
         workflow_context: str
     ) -> str:
-
         messages = [
             {
                 "role": "system",
@@ -953,7 +813,6 @@ Workflow Results (summarize briefly):
         self,
         telegram_user_id: int
     ) -> list[dict[str, str]]:
-
         history = await (
             chat_memory_repository
             .get_recent_history(
@@ -963,25 +822,14 @@ Workflow Results (summarize briefly):
         )
 
         context_messages = []
-
         for item in history:
-
-            content = (
-                item.get(
-                    "content",
-                    ""
-                ).strip()
-            )
-
+            content = item.get("content", "").strip()
             if not content:
                 continue
 
             context_messages.append(
                 {
-                    "role": item.get(
-                        "role",
-                        "user"
-                    ),
+                    "role": item.get("role", "user"),
                     "content": content
                 }
             )
@@ -994,9 +842,7 @@ Workflow Results (summarize briefly):
         user_message: str,
         assistant_message: str
     ) -> None:
-
         try:
-
             await (
                 chat_memory_repository.store_message(
                     telegram_user_id=telegram_user_id,
@@ -1014,37 +860,26 @@ Workflow Results (summarize briefly):
             )
 
         except Exception:
-
-            logger.exception(
-                "Failed to store conversation"
-            )
+            logger.exception("Failed to store conversation")
 
     async def clear_memory(
         self,
         telegram_user_id: int
     ) -> None:
-
         try:
-
             await (
                 chat_memory_repository.clear_history(
                     telegram_user_id
                 )
             )
-
         except Exception:
-
-            logger.exception(
-                "Failed to clear memory"
-            )
+            logger.exception("Failed to clear memory")
 
     async def generate_friendly_error(
         self,
         user_message: str
     ) -> str:
-
         try:
-
             messages = [
                 {
                     "role": "system",
@@ -1068,7 +903,6 @@ Workflow Results (summarize briefly):
             )
 
         except Exception:
-
             return (
                 "⚠️ Sorry, something went wrong "
                 "while processing your request."
@@ -1077,9 +911,7 @@ Workflow Results (summarize briefly):
     async def health_check(
         self
     ) -> bool:
-
         try:
-
             response = await (
                 self.provider.generate_response(
                     messages=[
@@ -1090,13 +922,11 @@ Workflow Results (summarize briefly):
                     ]
                 )
             )
-
             return bool(response)
 
         except AIProviderException:
-
-            logger.exception(
-                "AI provider health check failed"
-            )
-
+            logger.exception("AI provider health check failed")
             return False
+
+
+plugin_loader = plugin_loader
