@@ -1,5 +1,9 @@
+# app/interfaces/telegram/bot.py
+
+```python
 from __future__ import annotations
 
+import asyncio
 import logging
 import os
 
@@ -56,12 +60,33 @@ class TelegramBot:
             self.application.process_update
         )
 
+        self._stop_event = asyncio.Event()
+
     async def startup(self) -> None:
         logger.info(
             "Telegram bot startup completed"
         )
 
     async def shutdown(self) -> None:
+        logger.info(
+            "Stopping Telegram polling..."
+        )
+
+        if self.application.updater:
+            await self.application.updater.stop()
+
+        logger.info(
+            "Stopping Telegram application..."
+        )
+
+        await self.application.stop()
+
+        logger.info(
+            "Shutting down Telegram application..."
+        )
+
+        await self.application.shutdown()
+
         logger.info(
             "Closing database connection..."
         )
@@ -91,8 +116,7 @@ class TelegramBot:
 
                 except Exception:
                     logger.exception(
-                        "Failed to send "
-                        "error message"
+                        "Failed to send error message"
                     )
 
     async def process_update_with_auth(
@@ -170,3 +194,102 @@ class TelegramBot:
         logger.info(
             "Telegram bot is running"
         )
+
+        try:
+            await self._stop_event.wait()
+
+        finally:
+            await self.shutdown()
+
+    async def stop(self) -> None:
+        self._stop_event.set()
+```
+
+---
+
+# app/interfaces/telegram/handlers.py
+
+```python
+from __future__ import annotations
+
+from telegram.ext import (
+    Application,
+    CommandHandler,
+)
+
+from app.interfaces.telegram.commands.admin import (
+    register_admin_handlers,
+)
+from app.interfaces.telegram.commands.ai_chat import (
+    register_ai_chat_handlers,
+)
+from app.interfaces.telegram.commands.calendar import (
+    register_calendar_handlers,
+)
+from app.interfaces.telegram.commands.system import (
+    help_command,
+    start_command,
+    status_command,
+)
+
+
+def register_handlers(
+    application: Application
+) -> None:
+    application.add_handler(
+        CommandHandler(
+            "start",
+            start_command
+        )
+    )
+
+    application.add_handler(
+        CommandHandler(
+            "help",
+            help_command
+        )
+    )
+
+    application.add_handler(
+        CommandHandler(
+            "status",
+            status_command
+        )
+    )
+
+    register_ai_chat_handlers(
+        application
+    )
+
+    register_calendar_handlers(
+        application
+    )
+
+    register_admin_handlers(
+        application
+    )
+```
+
+---
+
+# main.py
+
+```python
+from __future__ import annotations
+
+import asyncio
+import logging
+import signal
+from contextlib import suppress
+
+from dotenv import load_dotenv
+
+from app.core.scheduler import (
+    scheduler_manager,
+)
+from app.database.base import (
+    db,
+    init_db,
+)
+from app.database.repositories.rclone
+```
