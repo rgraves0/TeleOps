@@ -51,8 +51,17 @@ class AIProvider:
 
     async def generate_response(
         self,
-        messages: list[dict]
+        messages: list[dict],
+        temperature: float | None = None,
+        max_tokens: int | None = None,
+        **kwargs
     ) -> str:
+        if temperature is not None:
+            self.temperature = temperature
+
+        if max_tokens is not None:
+            self.max_tokens = max_tokens
+
         return await self.chat_completion(
             messages
         )
