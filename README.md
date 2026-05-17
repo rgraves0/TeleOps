@@ -1,249 +1,137 @@
-# 🤖 TeleOps-AI
+# TeleOps-AI 🤖
 
-<div align="center">
-
-### 🚀 Production-Ready Telegram AI Assistant
-
-Lightweight AI Operations Assistant built with **Python**, **FastAPI**, **Telegram Bot API**, and **Groq AI**.
-
-Designed for:
-- ☁️ Oracle Free Tier VPS
-- 🪶 Low RAM Servers
-- ⚡ Fast Async Performance
-- 🤖 AI-Powered Automation
+A secure modular Telegram AI Operations Assistant built for automation, workflows, cloud storage search, reminders, AI chat, and system operations.
 
 ---
 
-![Python](https://img.shields.io/badge/Python-3.10+-blue.svg)
-![FastAPI](https://img.shields.io/badge/FastAPI-Async-green)
-![Telegram](https://img.shields.io/badge/Telegram-Bot-blue)
-![SQLite](https://img.shields.io/badge/Database-SQLite-lightgrey)
-![License](https://img.shields.io/badge/License-MIT-yellow.svg)
+## ✨ Features
 
-</div>
+### 🤖 AI Assistant
 
----
-
-# ✨ Features
-
-## 🧠 AI Assistant
-
-Powered by:
-- ⚡ Groq API
-- 🦙 Llama 3.3 70B Versatile
-
-### Commands
-
-```bash
-/ai
-```
-
-### Example
-
-```bash
-/ai Explain Docker networking
-```
+- Conversational AI chat
+- Workflow-based task execution
+- Automatic tool routing
+- English ↔ Burmese language support
+- Context memory
+- Multi-step AI workflows
 
 ---
 
-# 📧 Gmail Integration
+### 📱 Telegram Integration
 
-Secure Gmail API integration with AI summaries.
-
-### Features
-
-- 📥 Read latest emails
-- 🔎 Search emails
-- 🤖 AI email summarization
-- 🔐 OAuth support
-
-### Commands
-
-```bash
-/latest
-/find
-```
-
-### Example
-
-```bash
-/find invoices
-```
+- Telegram bot interface
+- AI chat mode
+- Interactive command system
+- Middleware authentication
+- Inline callback menus
 
 ---
 
-# 📰 RSS Feed Monitoring
+### 📅 Reminder & Calendar System
 
-Monitor RSS feeds directly from Telegram.
-
-### Features
-
-- ➕ Add feeds
-- 📋 List feeds
-- 👀 Watch feed updates
-- 🤖 AI summaries
-
-### Commands
-
-```bash
-/addrss
-/feeds
-/watch
-```
+- Create reminders
+- Delete reminders
+- List scheduled events
+- Persistent scheduler restoration
+- APScheduler integration
 
 ---
 
-# 📅 Event Reminder System
+### 🌐 Web Search
 
-Simple event management system.
-
-### Features
-
-- ➕ Save events
-- 📋 List events
-- ❌ Delete events
-
-### Commands
-
-```bash
-/event
-/events
-/deleteevent
-```
+- AI-powered web search
+- Search summarization
+- Internet query workflows
+- Serper API integration
 
 ---
 
-# 📝 Notes System
+### ☁️ Cloud Storage Search
 
-Personal notes inside Telegram.
-
-### Features
-
-- 📝 Save notes
-- 📚 List notes
-- ❌ Delete notes
-
-### Commands
-
-```bash
-/note
-/notes
-/deletenote
-```
+- Rclone metadata indexing
+- Cloud file search
+- Multi-remote support
 
 ---
 
-# 🖥️ Server Monitoring
+### 📧 Email Assistant
 
-Monitor your VPS directly from Telegram.
-
-### Features
-
-- 💾 RAM usage
-- ⚙️ CPU usage
-- 📶 Ping test
-
-### Commands
-
-```bash
-/server
-/ping
-```
+- Unread email summaries
+- Inbox integrations
+- AI email summarization
 
 ---
 
-# ⚡ Tech Stack
+### 🔐 Security
 
-| Technology | Usage |
-|---|---|
-| Python 3.10+ | Backend |
-| FastAPI | API framework |
-| python-telegram-bot | Telegram bot |
-| SQLite | Database |
-| Groq API | AI inference |
-| Gmail API | Gmail integration |
-| Uvicorn | ASGI server |
-| Nginx | Reverse proxy |
+- Default-deny access model
+- Role-based access control
+- Middleware validation
+- Audit logging
+- Admin-only operations
 
 ---
 
-# 📂 Project Structure
+# 🏗 Architecture
 
 ```text
-TeleOps-AI/
+TeleOps-AI
 │
-├── handlers/
-│   ├── __init__.py
-│   └── commands.py
-│
-├── services/
-│   └── .gitkeep
-│
-├── utils/
-│   └── .gitkeep
+├── app/
+│   ├── ai/
+│   ├── core/
+│   ├── database/
+│   ├── interfaces/
+│   ├── plugins/
+│   ├── services/
+│   └── utils/
 │
 ├── data/
-│   └── .gitkeep
-│
+├── logs/
 ├── main.py
-├── config.py
-├── database.py
-├── ai_utils.py
-├── gmail_utils.py
-├── rss_utils.py
-├── monitoring_utils.py
-│
-├── requirements.txt
-├── README.md
-├── .env.example
-├── .gitignore
-└── LICENSE
+└── requirements.txt
 ```
 
 ---
 
-# 🔑 Environment Variables
+# ⚙️ Requirements
 
-Create a `.env` file:
+## System Requirements
 
-```env
-TELEGRAM_BOT_TOKEN=
-APP_URL=
-WEBHOOK_SECRET=
-GROQ_API_KEY=
-TELEGRAM_ADMIN_ID=
-
-GMAIL_CREDENTIALS_FILE=credentials.json
-GMAIL_TOKEN_FILE=token.json
-
-DATABASE_PATH=data/teleops.db
-```
+- Python 3.10+
+- Ubuntu / Debian recommended
+- 1GB RAM minimum
+- Linux VPS recommended
 
 ---
 
-# 🛠️ Installation
+# 🚀 Installation
 
-## 1️⃣ Clone Repository
+## Clone Repository
 
 ```bash
-git clone https://github.com/YOUR_USERNAME/TeleOps-AI.git
+git clone https://github.com/yourusername/TeleOps-AI.git
 
 cd TeleOps-AI
 ```
 
 ---
 
-## 2️⃣ Create Virtual Environment
+## Create Virtual Environment
 
 ```bash
 python3 -m venv venv
+```
 
+Activate:
+
+```bash
 source venv/bin/activate
 ```
 
 ---
 
-## 3️⃣ Install Dependencies
+## Install Dependencies
 
 ```bash
 pip install -r requirements.txt
@@ -251,164 +139,340 @@ pip install -r requirements.txt
 
 ---
 
-# ▶️ Run The Bot
+# 🔧 Environment Configuration
+
+Create `.env`
+
+```env
+# =====================================================
+# TELEGRAM
+# =====================================================
+
+TELEGRAM_BOT_TOKEN=
+
+# =====================================================
+# AI PROVIDER
+# =====================================================
+
+AI_PROVIDER=groq
+
+GROQ_API_KEY=
+GROQ_MODEL=qwen/qwen3-32b
+
+# =====================================================
+# WEATHER
+# =====================================================
+
+OPENWEATHER_API_KEY=
+
+# =====================================================
+# WEB SEARCH
+# =====================================================
+
+SERPER_API_KEY=
+
+# =====================================================
+# DATABASE
+# =====================================================
+
+DATABASE_PATH=data/teleops.db
+
+# =====================================================
+# SYSTEM
+# =====================================================
+
+TIMEZONE=Asia/Bangkok
+```
+
+---
+
+# ▶️ Running the Project
 
 ```bash
-python -m uvicorn main:app --host 0.0.0.0 --port 8000
+python main.py
 ```
 
 ---
 
-# 🌐 Webhook Configuration
+# 📖 Telegram Commands
 
-Webhook route:
-
-```text
-/webhook/{secret}
-```
-
----
-
-# 🔒 Nginx Reverse Proxy
-
-```nginx
-server {
-
-    server_name your-domain.com;
-
-    location / {
-
-        proxy_pass http://127.0.0.1:8000;
-
-        proxy_set_header Host $host;
-        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-    }
-}
-```
-
----
-
-# 🔐 SSL Setup
-
-Install Certbot:
-
-```bash
-sudo apt install certbot python3-certbot-nginx
-```
-
-Generate SSL:
-
-```bash
-sudo certbot --nginx
-```
-
----
-
-# 🤖 Telegram Commands
+## 🤖 AI Commands
 
 | Command | Description |
 |---|---|
-| `/start` | Start the bot |
-| `/help` | Show help menu |
-| `/about` | About project |
-| `/status` | Bot status |
-| `/ai` | Ask AI |
-| `/latest` | Latest Gmail emails |
-| `/find` | Search Gmail |
-| `/addrss` | Add RSS feed |
-| `/feeds` | List RSS feeds |
-| `/watch` | Watch RSS updates |
-| `/event` | Save event |
-| `/events` | List events |
-| `/deleteevent` | Delete event |
-| `/note` | Save note |
-| `/notes` | List notes |
-| `/deletenote` | Delete note |
-| `/server` | Server stats |
-| `/ping` | Ping test |
+| `/ai` | Enable AI chat mode |
+| `/exitai` | Disable AI chat mode |
+| `/clear` | Clear AI conversation memory |
 
 ---
 
-# ☁️ Deployment
+## 📅 Calendar Commands
 
-Recommended VPS:
+| Command | Description |
+|---|---|
+| `/calendar` | Open calendar menu |
 
-- ☁️ Oracle Cloud Free Tier
-- 🐧 Ubuntu 22.04
-- 💾 512MB RAM+
-- ⚡ 1 vCPU+
+### Calendar Features
 
----
-
-# 🪶 Lightweight Design
-
-This project is optimized for:
-- Low RAM VPS
-- Free Tier cloud servers
-- Async performance
-- Minimal CPU usage
-
-No local LLM required.
-
-AI inference runs on Groq Cloud.
+- Add reminders
+- List reminders
+- Delete reminders
+- Persistent scheduler jobs
 
 ---
 
-# 🔥 Future Improvements
+# 💬 AI Chat Examples
 
-Planned upgrades:
+## 🌦 Weather
 
-- 🌤️ Internet tools
-- 📅 Scheduler system
-- 🧠 Tool-aware AI agent
-- 🔔 Reminder notifications
-- 🎤 Voice assistant
-- 🌐 Web dashboard
-- 🧩 Plugin system
+```text
+weather in tokyo
+```
 
----
-
-# 🛡️ Security
-
-- 🔐 Webhook secret validation
-- 🔒 Environment variables
-- 🚫 Sensitive files excluded
-- 📁 SQLite local storage
+```text
+ရန်ကုန်ရာသီဥတု
+```
 
 ---
 
-# 📜 License
+## 🌐 Web Search
+
+```text
+latest AI news
+```
+
+```text
+YGN to BKK flight schedule
+```
+
+---
+
+## ☁️ Cloud Storage Search
+
+```text
+find backup.zip
+```
+
+---
+
+## 📧 Email Summary
+
+```text
+check unread emails
+```
+
+---
+
+# 🗄 Database
+
+SQLite database location:
+
+```text
+data/teleops.db
+```
+
+Core tables:
+
+- users
+- roles
+- reminders
+- audit_logs
+- inboxes
+- user_inboxes
+- chat_memory
+
+---
+
+# 🧩 Plugin System
+
+Plugins are loaded dynamically from:
+
+```text
+app/plugins/
+```
+
+Example plugins:
+
+```text
+weather/
+websearch/
+```
+
+Each plugin exposes async tool functions used by the AI workflow router.
+
+---
+
+# 🧠 Supported AI Providers
+
+## ⚡ Groq
+
+Recommended for lightweight VPS deployment.
+
+Recommended models:
+
+```text
+qwen/qwen3-32b
+deepseek-r1-distill-llama-70b
+```
+
+---
+
+## 🔷 Gemini
+
+Supported but quota-limited on free tier.
+
+Recommended models:
+
+```text
+gemini-2.0-flash
+gemini-2.0-flash-lite
+```
+
+---
+
+# 🖥 Recommended VPS Providers
+
+- Oracle Cloud Free Tier
+- Hetzner
+- Contabo
+- DigitalOcean
+
+---
+
+# 🛠 Recommended Stack
+
+```text
+Ubuntu 22.04
+Python 3.10+
+Systemd
+Nginx (optional)
+```
+
+---
+
+# 🚢 Deployment
+
+## Run with Systemd
+
+Example service:
+
+```ini
+[Unit]
+Description=TeleOps-AI
+After=network.target
+
+[Service]
+User=ubuntu
+WorkingDirectory=/home/ubuntu/TeleOps
+ExecStart=/home/ubuntu/TeleOps/venv/bin/python main.py
+Restart=always
+
+[Install]
+WantedBy=multi-user.target
+```
+
+---
+
+## Enable Service
+
+```bash
+sudo systemctl daemon-reload
+
+sudo systemctl enable teleops
+
+sudo systemctl start teleops
+```
+
+---
+
+## 📜 Check Logs
+
+```bash
+journalctl -u teleops -f
+```
+
+---
+
+# 🔐 Security Notes
+
+- Never expose `.env`
+- Protect API keys
+- Restrict Telegram access
+- Use firewall rules
+- Rotate secrets regularly
+
+---
+
+# 🧯 Troubleshooting
+
+## Telegram Bot Not Responding
+
+Verify:
+
+```bash
+python main.py
+```
+
+Check:
+
+- TELEGRAM_BOT_TOKEN
+- Middleware authentication
+- Handler registration
+
+---
+
+## AI Provider Errors
+
+Check:
+
+- API keys
+- Model names
+- Provider quotas
+
+---
+
+## Database Errors
+
+Reset database:
+
+```bash
+rm -f data/teleops.db
+```
+
+Restart:
+
+```bash
+python main.py
+```
+
+---
+
+# 🛣 Future Roadmap
+
+- Gmail OAuth integration
+- Shared inbox support
+- Voice commands
+- Docker deployment
+- Web dashboard
+- Multi-user RBAC
+- Vector memory
+- Multi-agent workflows
+
+---
+
+# 📄 License
 
 MIT License
 
 ---
 
-# ❤️ Credits
+# ⚠️ Disclaimer
 
-Built with:
+This project is intended for educational, automation, and personal operational use.
 
-- FastAPI
-- python-telegram-bot
-- Groq API
-- Gmail API
-- SQLite
+Users are responsible for:
 
----
-
-# ⭐ Support
-
-If you like this project:
-
-⭐ Star the repository  
-🍴 Fork the project  
-🛠️ Contribute improvements
-
----
-
-<div align="center">
-
-### 🚀 TeleOps-AI
-
-Lightweight Personal AI Operations Assistant
-
-</div>
+- API usage
+- Infrastructure security
+- Credential management
+- Compliance with platform policies
