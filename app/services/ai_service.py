@@ -167,6 +167,11 @@ LANGUAGE RULES:
 - Keep Burmese Unicode clean.
 
 GENERAL RULES:
+VERY IMPORTANT:
+- Keep replies SHORT.
+- Maximum 5 sentences.
+- Avoid long explanations.
+- Minimize token usage.
 - Be concise
 - Be human-friendly
 - Never expose raw JSON
@@ -386,11 +391,22 @@ class AIService:
                 exc
             )
 
-            fallback = await (
-                self.generate_friendly_error(
-                    message
-                )
-            )
+            error_text = str(exc)
+
+if "rate_limit" in error_text.lower():
+
+    fallback = (
+        "⚠️ AI service is busy right now.\n\n"
+        "Please wait 20-30 seconds and try again."
+    )
+
+else:
+
+    fallback = await (
+        self.generate_friendly_error(
+            message
+        )
+    )
 
             await self.store_conversation(
                 telegram_user_id,
@@ -920,8 +936,8 @@ IMPORTANT:
 - English input => English output.
 - Burmese input => Burmese Unicode output.
 
-Workflow Results:
-{workflow_context}
+Workflow Results (summarize briefly):
+{workflow_context[:1500]}
 '''
             }
         ]
