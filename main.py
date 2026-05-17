@@ -3,19 +3,21 @@ from __future__ import annotations
 import asyncio
 import logging
 import signal
-from contextlib import suppress
 
 from dotenv import load_dotenv
 
 from app.core.scheduler import (
-    scheduler_manager,
+    scheduler_service,
 )
 from app.database.base import (
-    db,
+    close_database,
     init_db,
 )
+from app.database.repositories.chat_memory import (
+    chat_memory_repository,
+)
 from app.database.repositories.rclone_meta import (
-    RcloneMetaRepository,
+    RCloneMetaRepository,
 )
 from app.interfaces.telegram.bot import (
     TelegramBot,
@@ -24,7 +26,7 @@ from app.plugins.loader import (
     plugin_loader,
 )
 from app.services.reminder_service import (
-    ReminderService,
+    reminder_service,
 )
 
 load_dotenv()
@@ -33,36 +35,30 @@ logging.basicConfig(
     level=logging.INFO,
     format=(
         "%(asctime)s | "
-        "%(levelname)s | "
         "%(name)s | "
+        "%(levelname)s | "
         "%(message)s"
     )
 )
 
-logger = logging.getLogger(__name__)
+logger = logging.getLogger(
+    __name__
+)
 
 
 class TeleOpsApplication:
     def __init__(self):
         self.bot = TelegramBot()
 
-        self.reminder_service = (
-            ReminderService()
-        )
-
-        self.rclone_repository = (
-            RcloneMetaRepository()
-        )
+        self.running = False
 
         self.shutdown_event = (
             asyncio.Event()
         )
 
-        self.bot_task: (
-            asyncio.Task | None
-        ) = None
-
-    async def initialize(self) -> None:
+    async def initialize(
+        self
+    ) -> None:
         logger.info(
             "Initializing database..."
         )
@@ -70,11 +66,26 @@ class TeleOpsApplication:
         await init_db()
 
         logger.info(
-            "Initializing RClone metadata tables..."
+            "Initializing chat "
+            "memory tables..."
         )
 
         await (
-            self.rclone_repository
+            chat_memory_repository
+            .initialize_table()
+        )
+
+        logger.info(
+            "Initializing RClone "
+            "metadata tables..."
+        )
+
+        rclone_repository = (
+            RCloneMetaRepository()
+        )
+
+        await (
+            rclone_repository
             .initialize_table()
         )
 
@@ -82,13 +93,12 @@ class TeleOpsApplication:
             "Loading plugins..."
         )
 
-        plugin_loader.load_all_plugins()
+        await plugin_loader.load_plugins()
 
-        plugins = (
-            plugin_loader.list_plugins()
-        )
-
-        for plugin in plugins:
+        for plugin in (
+            plugin_loader
+            .list_plugins()
+        ):
             logger.info(
                 "Plugin loaded | "
                 "name=%s | enabled=%s",
@@ -97,11 +107,11 @@ class TeleOpsApplication:
             )
 
         logger.info(
-            "Attaching Telegram application "
-            "to scheduler..."
+            "Attaching Telegram "
+            "application to scheduler..."
         )
 
-        scheduler_manager.attach_application(
+        scheduler_service.attach_application(
             self.bot.application
         )
 
@@ -109,102 +119,90 @@ class TeleOpsApplication:
             "Starting scheduler..."
         )
 
-        scheduler_manager.start()
+        await scheduler_service.start()
 
         logger.info(
-            "Restoring scheduled reminders..."
+            "Restoring scheduled "
+            "reminders..."
         )
 
         await (
-            self.reminder_service
-            .restore_pending_reminders()
+            reminder_service
+            .restore_jobs()
         )
 
         logger.info(
-            "Core initialization completed"
+            "Core initialization "
+            "completed"
         )
 
-    async def start_bot(self) -> None:
+    async def start_bot(
+        self
+    ) -> None:
         logger.info(
             "Starting Telegram bot..."
         )
 
-        self.bot_task = (
-            asyncio.create_task(
-                self.bot.run()
-            )
-        )
+        await self.bot.run()
 
-    async def stop_bot(self) -> None:
-        if self.bot_task is None:
-            return
-
-        logger.info(
-            "Stopping Telegram bot task..."
-        )
-
-        await self.bot.stop()
-
-        with suppress(
-            asyncio.CancelledError
-        ):
-            await self.bot_task
-
-    async def shutdown(self) -> None:
-        logger.info(
-            "Graceful shutdown initiated..."
-        )
-
-        await self.stop_bot()
-
-        logger.info(
-            "Stopping scheduler..."
-        )
-
-        await scheduler_manager.shutdown()
-
-        logger.info(
-            "Disconnecting database..."
-        )
-
-        await db.disconnect()
-
-        logger.info(
-            "Shutdown completed"
-        )
-
-    def register_signal_handlers(
+    async def shutdown(
         self
     ) -> None:
-        loop = asyncio.get_running_loop()
+        if not self.running:
+            return
 
-        for sig in (
-            signal.SIGINT,
-            signal.SIGTERM
-        ):
-            loop.add_signal_handler(
-                sig,
-                self.shutdown_event.set
+        self.running = False
+
+        logger.info(
+            "Shutting down "
+            "TeleOps-AI..."
+        )
+
+        try:
+            await scheduler_service.shutdown()
+
+        except Exception:
+            logger.exception(
+                "Scheduler shutdown failed"
             )
 
-    async def run(self) -> None:
-        self.register_signal_handlers()
+        try:
+            await self.bot.shutdown()
+
+        except Exception:
+            logger.exception(
+                "Telegram bot shutdown "
+                "failed"
+            )
+
+        try:
+            await close_database()
+
+        except Exception:
+            logger.exception(
+                "Database shutdown failed"
+            )
+
+        logger.info(
+            "TeleOps-AI shutdown "
+            "completed"
+        )
+
+        self.shutdown_event.set()
+
+    async def run(
+        self
+    ) -> None:
+        self.running = True
 
         await self.initialize()
 
+        logger.info(
+            "TeleOps-AI is fully "
+            "operational"
+        )
+
         await self.start_bot()
-
-        logger.info(
-            "TeleOps-AI is fully operational"
-        )
-
-        await self.shutdown_event.wait()
-
-        logger.info(
-            "Shutdown signal received"
-        )
-
-        await self.shutdown()
 
 
 async def main() -> None:
@@ -212,21 +210,30 @@ async def main() -> None:
         TeleOpsApplication()
     )
 
+    loop = asyncio.get_running_loop()
+
+    def signal_handler() -> None:
+        logger.info(
+            "Shutdown signal received"
+        )
+
+        asyncio.create_task(
+            application.shutdown()
+        )
+
+    for sig in (
+        signal.SIGINT,
+        signal.SIGTERM
+    ):
+        loop.add_signal_handler(
+            sig,
+            signal_handler
+        )
+
     try:
         await application.run()
 
-    except KeyboardInterrupt:
-        logger.warning(
-            "Keyboard interrupt received"
-        )
-
-        await application.shutdown()
-
-    except Exception:
-        logger.exception(
-            "Fatal application error"
-        )
-
+    finally:
         await application.shutdown()
 
 
