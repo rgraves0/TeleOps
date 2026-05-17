@@ -6,7 +6,6 @@ import signal
 from contextlib import suppress
 
 from dotenv import load_dotenv
-from telegram import Update
 
 from app.core.scheduler import (
     scheduler_manager,
@@ -59,6 +58,10 @@ class TeleOpsApplication:
             asyncio.Event()
         )
 
+        self.bot_task: (
+            asyncio.Task | None
+        ) = None
+
     async def initialize(self) -> None:
         logger.info(
             "Initializing database..."
@@ -66,13 +69,13 @@ class TeleOpsApplication:
 
         await init_db()
 
+        logger.info(
+            "Initializing RClone metadata tables..."
+        )
+
         await (
             self.rclone_repository
             .initialize_table()
-        )
-
-        logger.info(
-            "Database initialized"
         )
 
         logger.info(
@@ -118,76 +121,34 @@ class TeleOpsApplication:
         )
 
         logger.info(
-            "Application initialization completed"
+            "Core initialization completed"
         )
 
     async def start_bot(self) -> None:
         logger.info(
-            "Configuring Telegram bot..."
+            "Starting Telegram bot..."
         )
 
-        self.bot.setup()
-
-        application = (
-            self.bot.application
-        )
-
-        logger.info(
-            "Initializing Telegram application..."
-        )
-
-        await application.initialize()
-
-        logger.info(
-            "Starting Telegram application..."
-        )
-
-        await application.start()
-
-        logger.info(
-            "Starting Telegram polling..."
-        )
-
-        if application.updater is None:
-            raise RuntimeError(
-                "Telegram updater is unavailable"
+        self.bot_task = (
+            asyncio.create_task(
+                self.bot.run()
             )
-
-        await application.updater.start_polling(
-            allowed_updates=Update.ALL_TYPES,
-            drop_pending_updates=False
-        )
-
-        logger.info(
-            "Telegram bot is now online"
         )
 
     async def stop_bot(self) -> None:
-        application = (
-            self.bot.application
-        )
+        if self.bot_task is None:
+            return
 
         logger.info(
-            "Stopping Telegram polling..."
+            "Stopping Telegram bot task..."
         )
 
-        if application.updater:
-            with suppress(Exception):
-                await application.updater.stop()
+        self.bot_task.cancel()
 
-        logger.info(
-            "Stopping Telegram application..."
-        )
-
-        with suppress(Exception):
-            await application.stop()
-
-        logger.info(
-            "Shutting down Telegram application..."
-        )
-
-        with suppress(Exception):
-            await application.shutdown()
+        with suppress(
+            asyncio.CancelledError
+        ):
+            await self.bot_task
 
     async def shutdown(self) -> None:
         logger.info(
@@ -209,7 +170,7 @@ class TeleOpsApplication:
         await db.disconnect()
 
         logger.info(
-            "TeleOps-AI shutdown completed"
+            "Shutdown completed"
         )
 
     def register_signal_handlers(
@@ -234,7 +195,7 @@ class TeleOpsApplication:
         await self.start_bot()
 
         logger.info(
-            "TeleOps-AI fully operational"
+            "TeleOps-AI is fully operational"
         )
 
         await self.shutdown_event.wait()
