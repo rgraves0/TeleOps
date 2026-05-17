@@ -12,9 +12,6 @@ from app.database.repositories.chat_memory import chat_memory_repository
 from app.database.repositories.rclone_meta import RcloneMetaRepository
 from app.interfaces.telegram.bot import TelegramBot
 from app.plugins.loader import plugin_loader
-# =====================================================================
-# FIXED: Imported 'ReminderService' class instead of lowercase 'reminder_service'
-# =====================================================================
 from app.services.reminder_service import ReminderService
 
 load_dotenv()
@@ -31,9 +28,6 @@ class TeleOpsApplication:
         self.running = False
         self.shutdown_event = asyncio.Event()
         self.rclone_repository = RcloneMetaRepository()
-        # =====================================================================
-        # FIXED: Instantiated the ReminderService class correctly
-        # =====================================================================
         self.reminder_service = ReminderService()
 
     async def initialize(self) -> None:
@@ -48,7 +42,7 @@ class TeleOpsApplication:
 
         logger.info("Loading plugins...")
         # =====================================================================
-        # FIXED: Removed 'await' because load_all_plugins() is a synchronous function
+        # FIXED: Confirmed loader is executed synchronously without 'await'
         # =====================================================================
         plugin_loader.load_all_plugins()
 
@@ -60,7 +54,7 @@ class TeleOpsApplication:
 
         logger.info("Restoring scheduled reminders...")
         # =====================================================================
-        # FIXED: Called restore_jobs via self.reminder_service instance
+        # FIXED: execute asynchronous restore workflow sequentially
         # =====================================================================
         await self.reminder_service.restore_jobs()
 
@@ -112,6 +106,7 @@ class TeleOpsApplication:
         finally:
             await self.shutdown()
 
+
 async def main() -> None:
     application = TeleOpsApplication()
     loop = asyncio.get_running_loop()
@@ -127,6 +122,7 @@ async def main() -> None:
             logger.warning("Signal handlers not supported on this platform")
 
     await application.run()
+
 
 if __name__ == "__main__":
     try:
