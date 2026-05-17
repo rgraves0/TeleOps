@@ -8,8 +8,11 @@ import psutil
 from telegram import Update
 from telegram.ext import ContextTypes
 
+# =====================================================================
+# FIXED: Linked to centralized scheduler_service
+# =====================================================================
 from app.core.scheduler import (
-    scheduler_manager,
+    scheduler_service,
 )
 from app.database.base import (
     DATABASE_PATH,
@@ -44,9 +47,9 @@ async def start_command(
     )
 
     message = (
-        "🤖 TeleOps-AI Online\n\n"
-        f"👤 User: {full_name}\n"
-        f"🛡 Role: {role_name}\n\n"
+        " TeleOps-AI Online\n\n"
+        f" User: {full_name}\n"
+        f" Role: {role_name}\n\n"
         "Use /help to see commands."
     )
 
@@ -63,7 +66,7 @@ async def help_command(
         return
 
     help_text = (
-        "📘 TeleOps-AI Commands\n\n"
+        " TeleOps-AI Commands\n\n"
         "/start - Start bot\n"
         "/help - Show help\n"
         "/status - System status\n"
@@ -130,22 +133,25 @@ async def status_command(
     if not plugin_text:
         plugin_text = "No plugins loaded"
 
+    # =====================================================================
+    # FIXED: Safely counting scheduled jobs via native apscheduler API
+    # =====================================================================
     scheduler_jobs = len(
-        scheduler_manager.list_jobs()
+        scheduler_service.scheduler.get_jobs()
     )
 
     message = (
-        "📊 TeleOps-AI Status\n\n"
-        f"🖥 Platform: {platform.system()}\n"
-        f"🐍 Python: {platform.python_version()}\n"
+        " TeleOps-AI Status\n\n"
+        f" Platform: {platform.system()}\n"
+        f" Python: {platform.python_version()}\n"
         f"⚡ CPU Usage: {cpu_usage}%\n"
-        f"🧠 RAM Usage: "
+        f" RAM Usage: "
         f"{ram_used_mb:.2f} MB / "
         f"{ram_total_mb:.2f} MB\n"
         f"⏱ Uptime: {uptime_seconds}s\n"
-        f"🗄 Database: {db_state}\n"
-        f"📅 Scheduled Jobs: {scheduler_jobs}\n\n"
-        f"🔌 Plugins:\n{plugin_text}"
+        f" Database: {db_state}\n"
+        f" Scheduled Jobs: {scheduler_jobs}\n\n"
+        f" Plugins:\n{plugin_text}"
     )
 
     await update.effective_message.reply_text(
