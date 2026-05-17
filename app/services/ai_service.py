@@ -2,8 +2,13 @@ from __future__ import annotations
 
 import json
 import logging
+import os
+import platform
 from collections import defaultdict
+from datetime import datetime
 from typing import Any
+
+import psutil
 
 from app.ai.prompts import (
     INTENT_PARSER_PROMPT,
@@ -51,6 +56,15 @@ class AIService:
                 "ရှာ",
                 "သတင်း"
             ],
+            "system_status": [
+                "status",
+                "system",
+                "cpu",
+                "ram",
+                "memory",
+                "uptime",
+                "health"
+            ],
             "calendar_add": [
                 "remind",
                 "reminder",
@@ -61,6 +75,24 @@ class AIService:
                 "သတိပေး",
                 "အချိန်ဇယား"
             ]
+        }
+
+        self.intent_dispatcher = {
+            "web_search": (
+                self.handle_web_search
+            ),
+            "weather": (
+                self.handle_weather
+            ),
+            "system_status": (
+                self.handle_system_status
+            ),
+            "calendar_add": (
+                self.handle_calendar_action
+            ),
+            "reminder": (
+                self.handle_calendar_action
+            )
         }
 
     async def process_user_message(
@@ -101,17 +133,32 @@ class AIService:
                 )
             )
 
-            tool_response = await (
+            tool_execution = await (
                 self.dispatch_tool(
                     intent_result,
                     message
                 )
             )
 
+            raw_output = (
+                tool_execution.get(
+                    "raw_output",
+                    ""
+                )
+            )
+
+            summarized_response = (
+                await self.summarize_tool_output(
+                    intent_result=intent_result,
+                    raw_output=raw_output
+                )
+            )
+
             return {
                 "type": "tool",
-                "response": tool_response,
-                "intent_data": intent_result
+                "response": summarized_response,
+                "intent_data": intent_result,
+                "raw_output": raw_output
             }
 
         except Exception as exc:
@@ -253,7 +300,7 @@ class AIService:
         self,
         intent_data: dict[str, Any],
         original_message: str
-    ) -> str:
+    ) -> dict[str, Any]:
         intent = (
             intent_data.get(
                 "intent",
@@ -267,50 +314,35 @@ class AIService:
             intent
         )
 
-        try:
-            if intent == "weather":
-                return await (
-                    self.handle_weather(
-                        intent_data,
-                        original_message
-                    )
-                )
-
-            if intent == "web_search":
-                return await (
-                    self.handle_web_search(
-                        intent_data,
-                        original_message
-                    )
-                )
-
-            if (
+        handler = (
+            self.intent_dispatcher.get(
                 intent
-                in [
-                    "calendar_add",
-                    "reminder"
-                ]
-            ):
-                return (
-                    "📅 Reminder feature "
-                    "routing is ready."
-                )
+            )
+        )
 
-            return await (
-                self.handle_chat_fallback(
+        if handler is None:
+            fallback_response = (
+                await self.handle_chat_fallback(
                     original_message
                 )
             )
 
-        except Exception as exc:
-            logger.exception(
-                "Tool dispatch failed: %s",
-                exc
-            )
+            return {
+                "intent": intent,
+                "raw_output": (
+                    fallback_response
+                )
+            }
 
-            return (
-                "❌ Tool execution failed."
-            )
+        result = await handler(
+            intent_data,
+            original_message
+        )
+
+        return {
+            "intent": intent,
+            "raw_output": result
+        }
 
     async def handle_weather(
         self,
@@ -325,7 +357,7 @@ class AIService:
 
         if plugin is None:
             return (
-                "⚠️ Weather plugin "
+                "Weather plugin "
                 "is unavailable."
             )
 
@@ -342,36 +374,17 @@ class AIService:
             or original_message
         )
 
+        logger.info(
+            "Executing weather "
+            "plugin city=%s",
+            city
+        )
+
         result = await plugin.get_weather(
             city
         )
 
-        if not result:
-            return (
-                "⚠️ Weather data "
-                "could not be retrieved."
-            )
-
-        summary_prompt = [
-            {
-                "role": "system",
-                "content": (
-                    "Summarize weather "
-                    "results naturally for "
-                    "Telegram users."
-                )
-            },
-            {
-                "role": "user",
-                "content": result
-            }
-        ]
-
-        return await (
-            self.provider.generate_response(
-                messages=summary_prompt
-            )
-        )
+        return str(result)
 
     async def handle_web_search(
         self,
@@ -386,7 +399,7 @@ class AIService:
 
         if plugin is None:
             return (
-                "⚠️ Web search plugin "
+                "Web search plugin "
                 "is unavailable."
             )
 
@@ -402,36 +415,129 @@ class AIService:
             or original_message
         )
 
+        logger.info(
+            "Executing web search "
+            "query=%s",
+            query
+        )
+
         results = await plugin.search(
             query=query
         )
 
-        if not results:
-            return (
-                "⚠️ No search results found."
+        return str(results)
+
+    async def handle_system_status(
+        self,
+        intent_data: dict[str, Any],
+        original_message: str
+    ) -> str:
+        memory = (
+            psutil.virtual_memory()
+        )
+
+        cpu_usage = (
+            psutil.cpu_percent(
+                interval=1
             )
+        )
+
+        disk = psutil.disk_usage(
+            "/"
+        )
+
+        boot_time = datetime.fromtimestamp(
+            psutil.boot_time()
+        )
+
+        plugins = (
+            plugin_loader.list_plugins()
+        )
+
+        plugin_names = [
+            plugin["name"]
+            for plugin in plugins
+            if plugin["enabled"]
+        ]
+
+        result = (
+            f"System Status\n\n"
+            f"Platform: "
+            f"{platform.system()} "
+            f"{platform.release()}\n"
+            f"CPU Usage: "
+            f"{cpu_usage}%\n"
+            f"RAM Usage: "
+            f"{memory.percent}%\n"
+            f"RAM Available: "
+            f"{round(memory.available / 1024 / 1024)} MB\n"
+            f"Disk Usage: "
+            f"{disk.percent}%\n"
+            f"Python Version: "
+            f"{platform.python_version()}\n"
+            f"Boot Time: "
+            f"{boot_time}\n"
+            f"Loaded Plugins: "
+            f"{', '.join(plugin_names)}\n"
+            f"AI Provider: "
+            f"{os.getenv('AI_PROVIDER')}"
+        )
+
+        return result
+
+    async def handle_calendar_action(
+        self,
+        intent_data: dict[str, Any],
+        original_message: str
+    ) -> str:
+        return (
+            "Reminder and calendar "
+            "workflow routing is ready."
+        )
+
+    async def summarize_tool_output(
+        self,
+        intent_result: dict[str, Any],
+        raw_output: str
+    ) -> str:
+        intent = (
+            intent_result.get(
+                "intent",
+                "unknown"
+            )
+        )
 
         summary_prompt = [
             {
                 "role": "system",
                 "content": (
-                    "Summarize search "
-                    "results clearly and "
-                    "concisely for "
-                    "Telegram users."
+                    "You are a Telegram AI "
+                    "assistant.\n"
+                    "Summarize tool results "
+                    "naturally for users.\n"
+                    "Do not expose raw JSON "
+                    "or internal intent data.\n"
+                    "Keep responses concise, "
+                    "helpful, and conversational."
                 )
             },
             {
                 "role": "user",
-                "content": results
+                "content": (
+                    f"Intent: {intent}\n\n"
+                    f"Tool Result:\n"
+                    f"{raw_output}"
+                )
             }
         ]
 
-        return await (
+        response = await (
             self.provider.generate_response(
                 messages=summary_prompt
             )
         )
+
+        return response
 
     async def handle_chat_fallback(
         self,
