@@ -15,7 +15,7 @@ logger = logging.getLogger(__name__)
 
 class WebSearchPlugin:
     def __init__(self) -> None:
-        self.base_url = (
+        self.search_url = (
             "https://html.duckduckgo.com/html/"
         )
 
@@ -46,11 +46,11 @@ class WebSearchPlugin:
             "Pragma": (
                 "no-cache"
             ),
-            "Referer": (
-                "https://duckduckgo.com/"
-            ),
             "Connection": (
                 "keep-alive"
+            ),
+            "Referer": (
+                "https://duckduckgo.com/"
             ),
         }
 
@@ -67,19 +67,19 @@ class WebSearchPlugin:
             )
 
         logger.info(
-            "Web search started "
+            "Starting web search "
             "query=%s",
             cleaned_query
         )
 
         try:
             async with httpx.AsyncClient(
+                headers=self.headers,
                 timeout=self.timeout,
-                follow_redirects=True,
-                headers=self.headers
+                follow_redirects=True
             ) as client:
                 response = await client.post(
-                    self.base_url,
+                    self.search_url,
                     data={
                         "q": cleaned_query
                     }
@@ -98,7 +98,7 @@ class WebSearchPlugin:
 
             if not result_blocks:
                 logger.info(
-                    "No search results found "
+                    "No results found "
                     "query=%s",
                     cleaned_query
                 )
@@ -107,25 +107,25 @@ class WebSearchPlugin:
                     "No search results found."
                 )
 
-            parsed_results = []
+            formatted_results = []
 
-            for block in result_blocks[
+            for result in result_blocks[
                 :max_results
             ]:
                 title_element = (
-                    block.select_one(
+                    result.select_one(
                         ".result__title"
                     )
                 )
 
                 snippet_element = (
-                    block.select_one(
+                    result.select_one(
                         ".result__snippet"
                     )
                 )
 
                 url_element = (
-                    block.select_one(
+                    result.select_one(
                         ".result__url"
                     )
                 )
@@ -134,7 +134,7 @@ class WebSearchPlugin:
 
                 snippet = ""
 
-                source_url = ""
+                source = ""
 
                 if title_element:
                     title = (
@@ -155,7 +155,7 @@ class WebSearchPlugin:
                     )
 
                 if url_element:
-                    source_url = (
+                    source = (
                         url_element
                         .get_text(
                             " ",
@@ -163,8 +163,8 @@ class WebSearchPlugin:
                         )
                     )
 
-                    source_url = unquote(
-                        source_url
+                    source = unquote(
+                        source
                     )
 
                 if (
@@ -176,44 +176,44 @@ class WebSearchPlugin:
                 cleaned_result = (
                     f"Title: {title}\n"
                     f"Snippet: {snippet}\n"
-                    f"Source: {source_url}"
+                    f"Source: {source}"
                 )
 
-                parsed_results.append(
+                formatted_results.append(
                     cleaned_result
                 )
 
-            if not parsed_results:
+            if not formatted_results:
                 return (
                     "No search results found."
                 )
 
-            formatted_output = (
+            final_output = (
                 f"Search Query: "
                 f"{cleaned_query}\n\n"
             )
 
-            for index, result in enumerate(
-                parsed_results,
+            for index, item in enumerate(
+                formatted_results,
                 start=1
             ):
-                formatted_output += (
+                final_output += (
                     f"[Result {index}]\n"
-                    f"{result}\n\n"
+                    f"{item}\n\n"
                 )
 
             logger.info(
-                "Web search completed "
+                "Search completed "
                 "query=%s results=%s",
                 cleaned_query,
-                len(parsed_results)
+                len(formatted_results)
             )
 
-            return formatted_output.strip()
+            return final_output.strip()
 
         except httpx.TimeoutException:
             logger.exception(
-                "Web search timeout "
+                "Search timeout "
                 "query=%s",
                 cleaned_query
             )
@@ -225,7 +225,7 @@ class WebSearchPlugin:
         except httpx.HTTPError as exc:
             logger.exception(
                 "HTTP error during "
-                "web search: %s",
+                "search: %s",
                 exc
             )
 
@@ -236,7 +236,7 @@ class WebSearchPlugin:
 
         except Exception as exc:
             logger.exception(
-                "Unexpected web search "
+                "Unexpected search "
                 "error: %s",
                 exc
             )
