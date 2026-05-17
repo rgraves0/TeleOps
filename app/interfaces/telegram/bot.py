@@ -147,27 +147,3 @@ class TelegramBot:
         logger.info(
             "Telegram bot is running"
         )
-
-        try:
-            await self.application.updater.idle()
-
-        finally:
-            logger.info(
-                "Stopping Telegram polling..."
-            )
-
-            await self.application.updater.stop()
-
-            logger.info(
-                "Stopping Telegram application..."
-            )
-
-            await self.application.stop()
-
-            logger.info(
-                "Shutting down Telegram application..."
-            )
-
-            await self.application.shutdown()
-
-            await self.shutdown()
