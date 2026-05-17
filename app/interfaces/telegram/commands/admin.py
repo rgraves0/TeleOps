@@ -40,7 +40,7 @@ async def admin_panel_command(
 
     if not users:
         await update.effective_message.reply_text(
-            "No users found."
+            "❌ No users found"
         )
 
         return
@@ -96,6 +96,12 @@ async def admin_user_callback(
 
         return
 
+    username = (
+        f"@{user['username']}"
+        if user.get("username")
+        else "No username"
+    )
+
     keyboard = [
         [
             InlineKeyboardButton(
@@ -116,12 +122,6 @@ async def admin_user_callback(
             )
         ]
     ]
-
-    username = (
-        f"@{user['username']}"
-        if user["username"]
-        else "No username"
-    )
 
     message = (
         "👤 User Information\n\n"
@@ -177,18 +177,21 @@ async def promote_user_callback(
         )
     )
 
-    role_name = "admin"
+    updated_role = "admin"
 
     if updated_user:
-        role_name = (
-            updated_user["role_name"]
+        updated_role = (
+            updated_user.get(
+                "role_name",
+                "admin"
+            )
         )
 
     await query.edit_message_text(
         (
             "✅ User promoted successfully\n\n"
             f"👤 Name: {user['full_name']}\n"
-            f"🛡 New Role: {role_name}"
+            f"🛡 Role: {updated_role}"
         )
     )
 
