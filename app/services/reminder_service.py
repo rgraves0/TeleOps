@@ -24,9 +24,6 @@ from telegram.ext import (
     filters,
 )
 
-# =====================================================================
-# FIXED: Imported scheduler_service correctly
-# =====================================================================
 from app.core.scheduler import (
     scheduler_service,
 )
@@ -91,9 +88,6 @@ class ReminderService:
         reminder_id: int,
         run_date: datetime
     ) -> None:
-        # =====================================================================
-        # FIXED: Linked to centralized scheduler_service
-        # =====================================================================
         await scheduler_service.add_job(
             func=self.trigger_reminder,
             run_date=run_date,
@@ -170,9 +164,6 @@ class ReminderService:
             )
 
         try:
-            # =====================================================================
-            # FIXED: Safely fetch the centralized application bot context
-            # =====================================================================
             bot = (
                 scheduler_service
                 .application.bot
@@ -210,9 +201,6 @@ class ReminderService:
         self,
         reminder_id: int
     ) -> bool:
-        # =====================================================================
-        # FIXED: Removed via scheduler_service context safely
-        # =====================================================================
         await scheduler_service.remove_job(
             f"reminder_{reminder_id}"
         )
@@ -241,9 +229,6 @@ class ReminderService:
             "scheduler jobs..."
         )
 
-        # =====================================================================
-        # FIXED: Mapped timezone validation dynamically
-        # =====================================================================
         now = datetime.now(
             scheduler_service
             .scheduler.timezone
