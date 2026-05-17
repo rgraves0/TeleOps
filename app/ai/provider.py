@@ -49,6 +49,14 @@ class AIProvider:
             )
         )
 
+    async def generate_response(
+        self,
+        messages: list[dict]
+    ) -> str:
+        return await self.chat_completion(
+            messages
+        )
+
     async def chat_completion(
         self,
         messages: list[dict]
@@ -241,160 +249,16 @@ class AIProvider:
         self,
         messages: list[dict]
     ) -> str:
-        api_key = os.getenv(
-            "OPENAI_API_KEY"
+        raise AIProviderError(
+            "OpenAI provider "
+            "not implemented yet"
         )
-
-        model = os.getenv(
-            "OPENAI_MODEL",
-            "gpt-4o-mini"
-        )
-
-        if not api_key:
-            raise AIProviderError(
-                "Missing OPENAI_API_KEY"
-            )
-
-        url = (
-            "https://api.openai.com/"
-            "v1/chat/completions"
-        )
-
-        headers = {
-            "Authorization": (
-                f"Bearer {api_key}"
-            ),
-            "Content-Type": (
-                "application/json"
-            )
-        }
-
-        payload = {
-            "model": model,
-            "messages": messages,
-            "temperature": self.temperature,
-            "max_tokens": self.max_tokens
-        }
-
-        logger.info(
-            "Sending OpenAI request..."
-        )
-
-        async with httpx.AsyncClient(
-            timeout=self.timeout
-        ) as client:
-            response = await client.post(
-                url,
-                headers=headers,
-                json=payload
-            )
-
-        logger.info(
-            "OpenAI response status=%s",
-            response.status_code
-        )
-
-        if response.status_code >= 400:
-            raise AIProviderError(
-                response.text
-            )
-
-        data = response.json()
-
-        try:
-            return data["choices"][0][
-                "message"
-            ]["content"]
-
-        except Exception as exc:
-            logger.exception(
-                "Invalid OpenAI response"
-            )
-
-            raise AIProviderError(
-                "Failed to parse "
-                "OpenAI response"
-            ) from exc
 
     async def _openrouter_chat(
         self,
         messages: list[dict]
     ) -> str:
-        api_key = os.getenv(
-            "OPENROUTER_API_KEY"
+        raise AIProviderError(
+            "OpenRouter provider "
+            "not implemented yet"
         )
-
-        model = os.getenv(
-            "OPENROUTER_MODEL"
-        )
-
-        if not api_key:
-            raise AIProviderError(
-                "Missing OPENROUTER_API_KEY"
-            )
-
-        if not model:
-            raise AIProviderError(
-                "Missing OPENROUTER_MODEL"
-            )
-
-        url = (
-            "https://openrouter.ai/api/v1/"
-            "chat/completions"
-        )
-
-        headers = {
-            "Authorization": (
-                f"Bearer {api_key}"
-            ),
-            "Content-Type": (
-                "application/json"
-            )
-        }
-
-        payload = {
-            "model": model,
-            "messages": messages,
-            "temperature": self.temperature,
-            "max_tokens": self.max_tokens
-        }
-
-        logger.info(
-            "Sending OpenRouter request..."
-        )
-
-        async with httpx.AsyncClient(
-            timeout=self.timeout
-        ) as client:
-            response = await client.post(
-                url,
-                headers=headers,
-                json=payload
-            )
-
-        logger.info(
-            "OpenRouter response status=%s",
-            response.status_code
-        )
-
-        if response.status_code >= 400:
-            raise AIProviderError(
-                response.text
-            )
-
-        data = response.json()
-
-        try:
-            return data["choices"][0][
-                "message"
-            ]["content"]
-
-        except Exception as exc:
-            logger.exception(
-                "Invalid OpenRouter response"
-            )
-
-            raise AIProviderError(
-                "Failed to parse "
-                "OpenRouter response"
-            ) from exc
