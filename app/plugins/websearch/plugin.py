@@ -1,250 +1,71 @@
 from __future__ import annotations
 
 import logging
-from urllib.parse import (
-    unquote,
-)
-
+from urllib.parse import unquote
 import httpx
-from bs4 import (
-    BeautifulSoup,
-)
+from bs4 import BeautifulSoup
 
 logger = logging.getLogger(__name__)
 
-
 class WebSearchPlugin:
     def __init__(self) -> None:
-        self.search_url = (
-            "https://html.duckduckgo.com/html/"
-        )
-
-        self.timeout = 30
-
+        self.base_url = "https://html.duckduckgo.com/html/" [cite: 815]
+        self.timeout = 30 [cite: 815]
         self.headers = {
-            "User-Agent": (
-                "Mozilla/5.0 "
-                "(X11; Linux x86_64) "
-                "AppleWebKit/537.36 "
-                "(KHTML, like Gecko) "
-                "Chrome/124.0.0.0 "
-                "Safari/537.36"
-            ),
-            "Accept": (
-                "text/html,"
-                "application/xhtml+xml,"
-                "application/xml;q=0.9,"
-                "image/avif,"
-                "image/webp,*/*;q=0.8"
-            ),
-            "Accept-Language": (
-                "en-US,en;q=0.9"
-            ),
-            "Cache-Control": (
-                "no-cache"
-            ),
-            "Pragma": (
-                "no-cache"
-            ),
-            "Connection": (
-                "keep-alive"
-            ),
-            "Referer": (
-                "https://duckduckgo.com/"
-            ),
+            "User-Agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36", [cite: 816]
+            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8", [cite: 817]
+            "Accept-Language": "en-US,en;q=0.9", [cite: 818]
+            "Cache-Control": "no-cache", [cite: 818]
+            "Pragma": "no-cache", [cite: 818, 819]
+            "Referer": "https://duckduckgo.com/", [cite: 819]
+            "Connection": "keep-alive", [cite: 819]
         }
 
-    async def search(
-        self,
-        query: str,
-        max_results: int = 5
-    ) -> str:
-        cleaned_query = query.strip()
+    async def search(self, query: str, max_results: int = 5) -> str:
+        if not query.strip():
+            return "Search query is empty."
 
-        if not cleaned_query:
-            return (
-                "Search query is empty."
-            )
-
-        logger.info(
-            "Starting web search "
-            "query=%s",
-            cleaned_query
-        )
-
+        params = {"q": query}
         try:
-            async with httpx.AsyncClient(
-                headers=self.headers,
-                timeout=self.timeout,
-                follow_redirects=True
-            ) as client:
-                response = await client.post(
-                    self.search_url,
-                    data={
-                        "q": cleaned_query
-                    }
-                )
+            async with httpx.AsyncClient(timeout=self.timeout) as client:
+                response = await client.get(self.base_url, params=params, headers=self.headers)
+            
+            if response.status_code >= 400:
+                logger.error(f"DuckDuckGo HTTP Search failed with status: {response.status_code}")
+                return "Failed to retrieve search results due to server error."
 
-            response.raise_for_status()
+            soup = BeautifulSoup(response.text, "html.parser")
+            results = soup.find_all("div", class_="result")
+            
+            if not results:
+                return "No search results found."
 
-            soup = BeautifulSoup(
-                response.text,
-                "lxml"
-            )
-
-            result_blocks = soup.select(
-                ".result"
-            )
-
-            if not result_blocks:
-                logger.info(
-                    "No results found "
-                    "query=%s",
-                    cleaned_query
-                )
-
-                return (
-                    "No search results found."
-                )
-
-            formatted_results = []
-
-            for result in result_blocks[
-                :max_results
-            ]:
-                title_element = (
-                    result.select_one(
-                        ".result__title"
-                    )
-                )
-
-                snippet_element = (
-                    result.select_one(
-                        ".result__snippet"
-                    )
-                )
-
-                url_element = (
-                    result.select_one(
-                        ".result__url"
-                    )
-                )
-
-                title = ""
-
-                snippet = ""
-
-                source = ""
-
-                if title_element:
-                    title = (
-                        title_element
-                        .get_text(
-                            " ",
-                            strip=True
-                        )
-                    )
-
-                if snippet_element:
-                    snippet = (
-                        snippet_element
-                        .get_text(
-                            " ",
-                            strip=True
-                        )
-                    )
-
-                if url_element:
-                    source = (
-                        url_element
-                        .get_text(
-                            " ",
-                            strip=True
-                        )
-                    )
-
-                    source = unquote(
-                        source
-                    )
-
-                if (
-                    not title
-                    and not snippet
-                ):
+            search_lines = []
+            for idx, res in enumerate(results[:max_results], 1):
+                title_tag = res.find("a", class_="result__url")
+                snippet_tag = res.find("a", class_="result__snippet")
+                
+                if not title_tag:
                     continue
 
-                cleaned_result = (
-                    f"Title: {title}\n"
-                    f"Snippet: {snippet}\n"
-                    f"Source: {source}"
-                )
+                title = title_tag.get_text(strip=True)
+                raw_url = title_tag.get("href", "")
+                
+                # DuckDuckGo outbound link redirection clean up
+                url = raw_url
+                if "/l/?kh=" in raw_url and "uddg=" in raw_url:
+                    try:
+                        url = unquote(raw_url.split("uddg=")[1].split("&")[0])
+                    except Exception:
+                        pass
+                
+                snippet = snippet_tag.get_text(strip=True) if snippet_tag else "No description available."
+                search_lines.append(f"{idx}. Title: {title}\n   URL: {url}\n   Snippet: {snippet}\n")
 
-                formatted_results.append(
-                    cleaned_result
-                )
-
-            if not formatted_results:
-                return (
-                    "No search results found."
-                )
-
-            final_output = (
-                f"Search Query: "
-                f"{cleaned_query}\n\n"
-            )
-
-            for index, item in enumerate(
-                formatted_results,
-                start=1
-            ):
-                final_output += (
-                    f"[Result {index}]\n"
-                    f"{item}\n\n"
-                )
-
-            logger.info(
-                "Search completed "
-                "query=%s results=%s",
-                cleaned_query,
-                len(formatted_results)
-            )
-
-            return final_output.strip()
-
-        except httpx.TimeoutException:
-            logger.exception(
-                "Search timeout "
-                "query=%s",
-                cleaned_query
-            )
-
-            return (
-                "Search request timed out."
-            )
-
-        except httpx.HTTPError as exc:
-            logger.exception(
-                "HTTP error during "
-                "search: %s",
-                exc
-            )
-
-            return (
-                "Unable to fetch "
-                "search results right now."
-            )
+            return "\n".join(search_lines)
 
         except Exception as exc:
-            logger.exception(
-                "Unexpected search "
-                "error: %s",
-                exc
-            )
-
-            return (
-                "An unexpected error "
-                "occurred during search."
-            )
-
+            logger.exception(f"WebSearchPlugin search workflow failed: {exc}")
+            return f"An error occurred during web search processing."
 
 plugin = WebSearchPlugin()
