@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
-import html
 import logging
 import os
 from datetime import datetime
@@ -67,7 +66,8 @@ async def ai_command(
         "• Search latest AI news\n"
         "• Check unread emails\n"
         "• Find backup.zip\n"
-        "• What's the weather in Bangkok?\n\n"
+        "• What's the weather in Tokyo?\n"
+        "• YGN to BKK flight schedule\n\n"
         "Use /exitai to leave AI mode."
     )
 
@@ -125,6 +125,7 @@ async def typing_indicator_loop(
 ) -> None:
 
     try:
+
         while not stop_event.is_set():
 
             await context.bot.send_chat_action(
@@ -138,6 +139,7 @@ async def typing_indicator_loop(
         raise
 
     except Exception as exc:
+
         logger.exception(
             "Typing indicator failed: %s",
             exc
@@ -150,12 +152,14 @@ async def update_processing_message(
 ) -> None:
 
     try:
+
         await processing_message.edit_text(
             text=text,
             parse_mode=ParseMode.HTML
         )
 
     except Exception as exc:
+
         logger.debug(
             "Processing message update skipped: %s",
             exc
@@ -194,7 +198,9 @@ def detect_processing_stage(
             "search",
             "news",
             "google",
-            "internet"
+            "internet",
+            "flight",
+            "schedule"
         ]
     ):
         return "🌐 <b>Searching the web...</b>"
@@ -231,16 +237,57 @@ def format_ai_response(
     response_text: str
 ) -> str:
 
-    cleaned = response_text.strip()
+    if not response_text:
+        return "No response generated."
 
-    cleaned = html.escape(
+    cleaned = str(
+        response_text
+    ).strip()
+
+    # =====================================================
+    # ESCAPE TELEGRAM HTML SPECIAL CHARACTERS
+    # =====================================================
+
+    cleaned = (
         cleaned
+        .replace("&", "&amp;")
+        .replace("<", "&lt;")
+        .replace(">", "&gt;")
+    )
+
+    # =====================================================
+    # NORMALIZE NEWLINES
+    # =====================================================
+
+    cleaned = cleaned.replace(
+        "\r\n",
+        "\n"
+    )
+
+    cleaned = cleaned.replace(
+        "\r",
+        "\n"
     )
 
     cleaned = cleaned.replace(
         "\n",
         "<br>"
     )
+
+    # =====================================================
+    # TELEGRAM MESSAGE LIMIT SAFETY
+    # =====================================================
+
+    MAX_TELEGRAM_LENGTH = 3500
+
+    if len(cleaned) > MAX_TELEGRAM_LENGTH:
+
+        cleaned = (
+            cleaned[
+                :MAX_TELEGRAM_LENGTH
+            ]
+            + "<br><br>..."
+        )
 
     return cleaned
 
@@ -337,16 +384,19 @@ async def ai_chat_handler(
         header = ""
 
         if response_type == "workflow":
+
             header = (
                 "⚡ <b>Workflow Completed</b>\n\n"
             )
 
         elif response_type == "tool":
+
             header = (
                 "🛠 <b>Task Completed</b>\n\n"
             )
 
         elif response_type == "error":
+
             header = (
                 "⚠️ <b>Processing Issue</b>\n\n"
             )
@@ -355,11 +405,38 @@ async def ai_chat_handler(
             f"{header}{formatted_response}"
         )
 
-        await processing_message.edit_text(
-            text=final_message,
-            parse_mode=ParseMode.HTML,
-            disable_web_page_preview=True
-        )
+        try:
+
+            await processing_message.edit_text(
+                text=final_message,
+                parse_mode=ParseMode.HTML,
+                disable_web_page_preview=True
+            )
+
+        except Exception:
+
+            logger.exception(
+                "Telegram HTML formatting failed"
+            )
+
+            safe_text = (
+                final_message
+                .replace("<br>", "\n")
+                .replace("<b>", "")
+                .replace("</b>", "")
+            )
+
+            safe_text = (
+                safe_text
+                .replace("&lt;", "<")
+                .replace("&gt;", ">")
+                .replace("&amp;", "&")
+            )
+
+            await processing_message.edit_text(
+                text=safe_text[:3500],
+                disable_web_page_preview=True
+            )
 
         return
 
@@ -370,14 +447,25 @@ async def ai_chat_handler(
             exc
         )
 
-        await processing_message.edit_text(
-            text=(
-                "⚠️ <b>Something went wrong.</b>"
-                "<br><br>"
-                "Please try again."
-            ),
-            parse_mode=ParseMode.HTML
-        )
+        try:
+
+            await processing_message.edit_text(
+                text=(
+                    "⚠️ <b>Something went wrong.</b>"
+                    "<br><br>"
+                    "Please try again."
+                ),
+                parse_mode=ParseMode.HTML
+            )
+
+        except Exception:
+
+            await processing_message.edit_text(
+                text=(
+                    "⚠️ Something went wrong.\n\n"
+                    "Please try again."
+                )
+            )
 
     finally:
 
@@ -708,8 +796,6 @@ def register_ai_chat_handlers(
     application: Application
 ) -> None:
 
-    # AI COMMANDS
-
     application.add_handler(
         CommandHandler(
             "ai",
@@ -730,8 +816,6 @@ def register_ai_chat_handlers(
             clear_memory_command
         )
     )
-
-    # CALENDAR COMMANDS
 
     application.add_handler(
         CommandHandler(
@@ -754,11 +838,6 @@ def register_ai_chat_handlers(
         )
     )
 
-    # =====================================================
-    # PRIORITY GROUP 0
-    # AI CHAT FIRST
-    # =====================================================
-
     application.add_handler(
         MessageHandler(
             filters.TEXT & ~filters.COMMAND,
@@ -766,11 +845,6 @@ def register_ai_chat_handlers(
         ),
         group=0
     )
-
-    # =====================================================
-    # PRIORITY GROUP 1
-    # CALENDAR EVENT CREATION
-    # =====================================================
 
     application.add_handler(
         MessageHandler(
