@@ -22,7 +22,9 @@ class AIProviderException(
 
 
 class AIProvider:
+
     def __init__(self):
+
         self.provider = os.getenv(
             "AI_PROVIDER",
             "groq"
@@ -38,14 +40,14 @@ class AIProvider:
         self.temperature = float(
             os.getenv(
                 "AI_TEMPERATURE",
-                "0.7"
+                "0.3"
             )
         )
 
         self.max_tokens = int(
             os.getenv(
                 "AI_MAX_TOKENS",
-                "2048"
+                "1024"
             )
         )
 
@@ -56,38 +58,74 @@ class AIProvider:
         max_tokens: int | None = None,
         **kwargs
     ) -> str:
+
+        original_temperature = (
+            self.temperature
+        )
+
+        original_max_tokens = (
+            self.max_tokens
+        )
+
         if temperature is not None:
             self.temperature = temperature
 
         if max_tokens is not None:
             self.max_tokens = max_tokens
 
-        return await self.chat_completion(
-            messages
-        )
+        try:
+
+            return await (
+                self.chat_completion(
+                    messages
+                )
+            )
+
+        finally:
+
+            self.temperature = (
+                original_temperature
+            )
+
+            self.max_tokens = (
+                original_max_tokens
+            )
 
     async def chat_completion(
         self,
         messages: list[dict]
     ) -> str:
+
         if self.provider == "groq":
-            return await self._groq_chat(
-                messages
+
+            return await (
+                self._groq_chat(
+                    messages
+                )
             )
 
         if self.provider == "gemini":
-            return await self._gemini_chat(
-                messages
+
+            return await (
+                self._gemini_chat(
+                    messages
+                )
             )
 
         if self.provider == "openai":
-            return await self._openai_chat(
-                messages
+
+            return await (
+                self._openai_chat(
+                    messages
+                )
             )
 
         if self.provider == "openrouter":
-            return await self._openrouter_chat(
-                messages
+
+            return await (
+                self._openrouter_chat(
+                    messages
+                )
             )
 
         raise AIProviderError(
@@ -99,16 +137,18 @@ class AIProvider:
         self,
         messages: list[dict]
     ) -> str:
+
         api_key = os.getenv(
             "GROQ_API_KEY"
         )
 
         model = os.getenv(
             "GROQ_MODEL",
-            "llama-3.1-70b-versatile"
+            "qwen/qwen3-32b"
         )
 
         if not api_key:
+
             raise AIProviderError(
                 "Missing GROQ_API_KEY"
             )
@@ -141,6 +181,7 @@ class AIProvider:
         async with httpx.AsyncClient(
             timeout=self.timeout
         ) as client:
+
             response = await client.post(
                 url,
                 headers=headers,
@@ -153,6 +194,7 @@ class AIProvider:
         )
 
         if response.status_code >= 400:
+
             raise AIProviderError(
                 response.text
             )
@@ -160,11 +202,15 @@ class AIProvider:
         data = response.json()
 
         try:
-            return data["choices"][0][
-                "message"
-            ]["content"]
+
+            return (
+                data["choices"][0]
+                ["message"]["content"]
+                .strip()
+            )
 
         except Exception as exc:
+
             logger.exception(
                 "Invalid Groq response"
             )
@@ -178,16 +224,18 @@ class AIProvider:
         self,
         messages: list[dict]
     ) -> str:
+
         api_key = os.getenv(
             "GEMINI_API_KEY"
         )
 
         model = os.getenv(
             "GEMINI_MODEL",
-            "gemini-1.5-flash"
+            "gemini-2.0-flash-lite"
         )
 
         if not api_key:
+
             raise AIProviderError(
                 "Missing GEMINI_API_KEY"
             )
@@ -222,6 +270,7 @@ class AIProvider:
         async with httpx.AsyncClient(
             timeout=self.timeout
         ) as client:
+
             response = await client.post(
                 url,
                 json=payload
@@ -233,6 +282,7 @@ class AIProvider:
         )
 
         if response.status_code >= 400:
+
             raise AIProviderError(
                 response.text
             )
@@ -240,11 +290,16 @@ class AIProvider:
         data = response.json()
 
         try:
-            return data["candidates"][0][
-                "content"
-            ]["parts"][0]["text"]
+
+            return (
+                data["candidates"][0]
+                ["content"]["parts"][0]
+                ["text"]
+                .strip()
+            )
 
         except Exception as exc:
+
             logger.exception(
                 "Invalid Gemini response"
             )
@@ -258,6 +313,7 @@ class AIProvider:
         self,
         messages: list[dict]
     ) -> str:
+
         raise AIProviderError(
             "OpenAI provider "
             "not implemented yet"
@@ -267,7 +323,91 @@ class AIProvider:
         self,
         messages: list[dict]
     ) -> str:
-        raise AIProviderError(
-            "OpenRouter provider "
-            "not implemented yet"
+
+        api_key = os.getenv(
+            "OPENROUTER_API_KEY"
         )
+
+        model = os.getenv(
+            "OPENROUTER_MODEL",
+            "qwen/qwen3-32b:free"
+        )
+
+        if not api_key:
+
+            raise AIProviderError(
+                "Missing OPENROUTER_API_KEY"
+            )
+
+        url = (
+            "https://openrouter.ai/"
+            "api/v1/chat/completions"
+        )
+
+        headers = {
+            "Authorization": (
+                f"Bearer {api_key}"
+            ),
+            "Content-Type": (
+                "application/json"
+            ),
+            "HTTP-Referer": (
+                "https://github.com"
+            ),
+            "X-Title": (
+                "TeleOps-AI"
+            )
+        }
+
+        payload = {
+            "model": model,
+            "messages": messages,
+            "temperature": self.temperature,
+            "max_tokens": self.max_tokens
+        }
+
+        logger.info(
+            "Sending OpenRouter request..."
+        )
+
+        async with httpx.AsyncClient(
+            timeout=self.timeout
+        ) as client:
+
+            response = await client.post(
+                url,
+                headers=headers,
+                json=payload
+            )
+
+        logger.info(
+            "OpenRouter response status=%s",
+            response.status_code
+        )
+
+        if response.status_code >= 400:
+
+            raise AIProviderError(
+                response.text
+            )
+
+        data = response.json()
+
+        try:
+
+            return (
+                data["choices"][0]
+                ["message"]["content"]
+                .strip()
+            )
+
+        except Exception as exc:
+
+            logger.exception(
+                "Invalid OpenRouter response"
+            )
+
+            raise AIProviderError(
+                "Failed to parse "
+                "OpenRouter response"
+            ) from exc
