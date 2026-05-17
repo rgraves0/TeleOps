@@ -1,27 +1,25 @@
 from __future__ import annotations
 
 import logging
-from urllib.parse import quote_plus
+from urllib.parse import (
+    unquote,
+)
 
 import httpx
-from bs4 import BeautifulSoup
+from bs4 import (
+    BeautifulSoup,
+)
 
 logger = logging.getLogger(__name__)
 
 
-class WebSearchError(Exception):
-    pass
-
-
 class WebSearchPlugin:
-    def __init__(self):
-        self.search_url = (
+    def __init__(self) -> None:
+        self.base_url = (
             "https://html.duckduckgo.com/html/"
         )
 
-        self.timeout = 20
-
-        self.max_results = 5
+        self.timeout = 30
 
         self.headers = {
             "User-Agent": (
@@ -29,226 +27,224 @@ class WebSearchPlugin:
                 "(X11; Linux x86_64) "
                 "AppleWebKit/537.36 "
                 "(KHTML, like Gecko) "
-                "Chrome/124.0 Safari/537.36"
+                "Chrome/124.0.0.0 "
+                "Safari/537.36"
             ),
             "Accept": (
                 "text/html,"
                 "application/xhtml+xml,"
                 "application/xml;q=0.9,"
-                "*/*;q=0.8"
+                "image/avif,"
+                "image/webp,*/*;q=0.8"
             ),
             "Accept-Language": (
                 "en-US,en;q=0.9"
             ),
-            "Connection": "keep-alive"
+            "Cache-Control": (
+                "no-cache"
+            ),
+            "Pragma": (
+                "no-cache"
+            ),
+            "Referer": (
+                "https://duckduckgo.com/"
+            ),
+            "Connection": (
+                "keep-alive"
+            ),
         }
 
     async def search(
         self,
         query: str,
-        max_results: int | None = None
+        max_results: int = 5
     ) -> str:
         cleaned_query = query.strip()
 
         if not cleaned_query:
-            raise WebSearchError(
-                "Search query is empty"
-            )
-
-        limit = (
-            max_results
-            if max_results is not None
-            else self.max_results
-        )
-
-        html = await self._fetch_results(
-            cleaned_query
-        )
-
-        results = self._parse_results(
-            html=html,
-            limit=limit
-        )
-
-        if not results:
             return (
-                "No search results found."
+                "Search query is empty."
             )
-
-        formatted_results = []
-
-        for index, result in enumerate(
-            results,
-            start=1
-        ):
-            block = (
-                f"[{index}] "
-                f"{result['title']}\n"
-                f"{result['snippet']}\n"
-                f"Source: {result['url']}"
-            )
-
-            formatted_results.append(
-                block
-            )
-
-        return "\n\n".join(
-            formatted_results
-        )
-
-    async def quick_search(
-        self,
-        query: str
-    ) -> str:
-        return await self.search(
-            query=query,
-            max_results=3
-        )
-
-    async def _fetch_results(
-        self,
-        query: str
-    ) -> str:
-        encoded_query = quote_plus(
-            query
-        )
-
-        url = (
-            f"{self.search_url}"
-            f"?q={encoded_query}"
-        )
 
         logger.info(
-            "Web search query: %s",
-            query
+            "Web search started "
+            "query=%s",
+            cleaned_query
         )
 
         try:
             async with httpx.AsyncClient(
                 timeout=self.timeout,
-                headers=self.headers,
-                follow_redirects=True
+                follow_redirects=True,
+                headers=self.headers
             ) as client:
-                response = await client.get(
-                    url
+                response = await client.post(
+                    self.base_url,
+                    data={
+                        "q": cleaned_query
+                    }
                 )
+
+            response.raise_for_status()
+
+            soup = BeautifulSoup(
+                response.text,
+                "lxml"
+            )
+
+            result_blocks = soup.select(
+                ".result"
+            )
+
+            if not result_blocks:
+                logger.info(
+                    "No search results found "
+                    "query=%s",
+                    cleaned_query
+                )
+
+                return (
+                    "No search results found."
+                )
+
+            parsed_results = []
+
+            for block in result_blocks[
+                :max_results
+            ]:
+                title_element = (
+                    block.select_one(
+                        ".result__title"
+                    )
+                )
+
+                snippet_element = (
+                    block.select_one(
+                        ".result__snippet"
+                    )
+                )
+
+                url_element = (
+                    block.select_one(
+                        ".result__url"
+                    )
+                )
+
+                title = ""
+
+                snippet = ""
+
+                source_url = ""
+
+                if title_element:
+                    title = (
+                        title_element
+                        .get_text(
+                            " ",
+                            strip=True
+                        )
+                    )
+
+                if snippet_element:
+                    snippet = (
+                        snippet_element
+                        .get_text(
+                            " ",
+                            strip=True
+                        )
+                    )
+
+                if url_element:
+                    source_url = (
+                        url_element
+                        .get_text(
+                            " ",
+                            strip=True
+                        )
+                    )
+
+                    source_url = unquote(
+                        source_url
+                    )
+
+                if (
+                    not title
+                    and not snippet
+                ):
+                    continue
+
+                cleaned_result = (
+                    f"Title: {title}\n"
+                    f"Snippet: {snippet}\n"
+                    f"Source: {source_url}"
+                )
+
+                parsed_results.append(
+                    cleaned_result
+                )
+
+            if not parsed_results:
+                return (
+                    "No search results found."
+                )
+
+            formatted_output = (
+                f"Search Query: "
+                f"{cleaned_query}\n\n"
+            )
+
+            for index, result in enumerate(
+                parsed_results,
+                start=1
+            ):
+                formatted_output += (
+                    f"[Result {index}]\n"
+                    f"{result}\n\n"
+                )
+
+            logger.info(
+                "Web search completed "
+                "query=%s results=%s",
+                cleaned_query,
+                len(parsed_results)
+            )
+
+            return formatted_output.strip()
+
+        except httpx.TimeoutException:
+            logger.exception(
+                "Web search timeout "
+                "query=%s",
+                cleaned_query
+            )
+
+            return (
+                "Search request timed out."
+            )
 
         except httpx.HTTPError as exc:
             logger.exception(
-                "HTTP request failed: %s",
+                "HTTP error during "
+                "web search: %s",
                 exc
             )
 
-            raise WebSearchError(
-                "Search request failed"
-            ) from exc
-
-        if response.status_code >= 400:
-            raise WebSearchError(
-                f"Search failed with "
-                f"status code "
-                f"{response.status_code}"
+            return (
+                "Unable to fetch "
+                "search results right now."
             )
 
-        return response.text
-
-    def _parse_results(
-        self,
-        html: str,
-        limit: int
-    ) -> list[dict[str, str]]:
-        soup = BeautifulSoup(
-            html,
-            "html.parser"
-        )
-
-        results = []
-
-        result_blocks = soup.select(
-            ".result"
-        )
-
-        for block in result_blocks:
-            title_element = (
-                block.select_one(
-                    ".result__title"
-                )
+        except Exception as exc:
+            logger.exception(
+                "Unexpected web search "
+                "error: %s",
+                exc
             )
 
-            snippet_element = (
-                block.select_one(
-                    ".result__snippet"
-                )
+            return (
+                "An unexpected error "
+                "occurred during search."
             )
-
-            link_element = (
-                block.select_one(
-                    "a.result__a"
-                )
-            )
-
-            if (
-                title_element is None
-                or link_element is None
-            ):
-                continue
-
-            title = (
-                title_element.get_text(
-                    separator=" ",
-                    strip=True
-                )
-            )
-
-            snippet = ""
-
-            if snippet_element:
-                snippet = (
-                    snippet_element.get_text(
-                        separator=" ",
-                        strip=True
-                    )
-                )
-
-            url = (
-                link_element.get(
-                    "href",
-                    ""
-                ).strip()
-            )
-
-            cleaned_result = {
-                "title": (
-                    self._clean_text(
-                        title
-                    )
-                ),
-                "snippet": (
-                    self._clean_text(
-                        snippet
-                    )
-                ),
-                "url": url
-            }
-
-            results.append(
-                cleaned_result
-            )
-
-            if len(results) >= limit:
-                break
-
-        return results
-
-    def _clean_text(
-        self,
-        text: str
-    ) -> str:
-        cleaned = " ".join(
-            text.split()
-        )
-
-        return cleaned.strip()
 
 
 plugin = WebSearchPlugin()
