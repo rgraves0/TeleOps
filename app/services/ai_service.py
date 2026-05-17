@@ -894,7 +894,7 @@ class AIService:
         return await (
             self.provider.generate_response(
                 messages=messages,
-                temperature=0.7
+                temperature=0.3
             )
         )
 
