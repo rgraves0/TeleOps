@@ -10,7 +10,6 @@ from typing import Any
 import psutil
 
 from app.ai.prompts import (
-    INTENT_PARSER_PROMPT,
     SYSTEM_PROMPT,
 )
 from app.ai.provider import (
@@ -27,21 +26,76 @@ from app.plugins.loader import (
 logger = logging.getLogger(__name__)
 
 
-SUMMARY_PROMPT = """
-You are TeleOps-AI, a Telegram-native AI assistant.
+AGENT_ROUTER_PROMPT = """
+You are TeleOps-AI Autonomous Router.
 
-Your job is to convert raw tool outputs into natural conversational replies.
+Your task is to decide whether the user's request:
+1. Needs a tool/plugin
+2. Or can be answered directly as casual conversation
+
+AVAILABLE TOOLS:
+
+1. web_search
+Purpose:
+- Search latest news
+- Search facts
+- Search internet information
+- Search current events
+Parameters:
+{
+  "tool": "web_search",
+  "query": "search query"
+}
+
+2. weather
+Purpose:
+- Weather forecast
+- Temperature
+- Climate
+- Rain information
+Parameters:
+{
+  "tool": "weather",
+  "city": "city name"
+}
+
+3. system_status
+Purpose:
+- CPU usage
+- RAM usage
+- Disk usage
+- System health
+Parameters:
+{
+  "tool": "system_status"
+}
+
+RULES:
+- If tool is needed, return ONLY valid JSON.
+- If no tool is needed, return:
+{
+  "tool": "none"
+}
+
+- Never explain reasoning.
+- Never return markdown.
+- Never return extra text.
+"""
+
+
+SUMMARY_PROMPT = """
+You are TeleOps-AI.
+
+Convert raw tool outputs into natural conversational replies.
 
 Rules:
-- Never expose raw JSON.
-- Never expose internal intents, confidence values, or system reasoning.
-- Keep responses concise and human-friendly.
-- Reply in the SAME language used by the user.
-- If the user used Burmese, reply naturally in Burmese.
-- If the user used English, reply naturally in English.
-- Summarize tool outputs clearly.
-- If tools fail, explain the failure politely and naturally.
-- Avoid robotic wording.
+- Never expose raw JSON
+- Never expose internal system details
+- Keep responses concise
+- Reply in same language as user
+- Burmese user => Burmese response
+- English user => English response
+- Sound natural and human
 """
 
 
@@ -51,89 +105,44 @@ class AIService:
 
         self.max_memory_messages = 20
 
-        self.tool_keywords = {
-            "weather": [
-                "weather",
-                "temperature",
-                "rain",
-                "forecast",
-                "climate",
-                "ရာသီဥတု",
-                "မိုးလေဝသ"
-            ],
-            "web_search": [
-                "search",
-                "google",
-                "find",
-                "lookup",
-                "news",
-                "latest",
-                "ရှာ",
-                "သတင်း"
-            ],
-            "system_status": [
-                "status",
-                "system",
-                "cpu",
-                "ram",
-                "memory",
-                "uptime",
-                "health"
-            ],
-            "calendar_add": [
-                "remind",
-                "reminder",
-                "schedule",
-                "calendar",
-                "meeting",
-                "alarm",
-                "သတိပေး",
-                "အချိန်ဇယား"
-            ]
-        }
-
-        self.intent_dispatcher = {
-            "web_search": (
-                self.handle_web_search
-            ),
-            "weather": (
-                self.handle_weather
-            ),
-            "system_status": (
-                self.handle_system_status
-            ),
-            "calendar_add": (
-                self.handle_calendar_action
-            ),
-            "reminder": (
-                self.handle_calendar_action
-            )
-        }
-
     async def process_user_message(
         self,
         telegram_user_id: int,
         message: str
     ) -> dict[str, Any]:
         try:
-            route_type = (
-                self.detect_route_type(
-                    message
+            memory_context = (
+                await self.build_memory_context(
+                    telegram_user_id
+                )
+            )
+
+            tool_decision = (
+                await self.autonomous_tool_selection(
+                    message=message,
+                    memory_context=memory_context
+                )
+            )
+
+            selected_tool = (
+                tool_decision.get(
+                    "tool",
+                    "none"
                 )
             )
 
             logger.info(
-                "AI route type=%s "
-                "user_id=%s",
-                route_type,
-                telegram_user_id
+                "Autonomous tool "
+                "selection=%s",
+                selected_tool
             )
 
-            if route_type == "chat":
+            if selected_tool == "none":
                 response = await (
                     self.handle_chat(
                         telegram_user_id,
-                        message
+                        message,
+                        memory_context
                     )
                 )
 
@@ -150,39 +159,17 @@ class AIService:
                     "response": response
                 }
 
-            intent_result = await (
-                self.parse_intent(
-                    message
-                )
-            )
-
-            tool_execution = await (
-                self.dispatch_tool(
-                    intent_result,
-                    message
-                )
-            )
-
-            raw_output = (
-                tool_execution.get(
-                    "raw_output",
-                    ""
-                )
-            )
-
-            tool_error = (
-                tool_execution.get(
-                    "error",
-                    False
+            tool_result = await (
+                self.execute_autonomous_tool(
+                    tool_decision
                 )
             )
 
             summarized_response = (
                 await self.summarize_tool_output(
                     original_user_message=message,
-                    intent_result=intent_result,
-                    raw_output=raw_output,
-                    tool_error=tool_error
+                    tool_name=selected_tool,
+                    raw_output=tool_result
                 )
             )
 
@@ -196,8 +183,8 @@ class AIService:
 
             return {
                 "type": "tool",
-                "response": summarized_response,
-                "intent_data": intent_result
+                "tool": selected_tool,
+                "response": summarized_response
             }
 
         except Exception as exc:
@@ -225,20 +212,70 @@ class AIService:
                 "response": fallback_response
             }
 
-    def detect_route_type(
+    async def autonomous_tool_selection(
         self,
-        message: str
-    ) -> str:
-        lowered = message.lower()
+        message: str,
+        memory_context: list[
+            dict[str, str]
+        ]
+    ) -> dict[str, Any]:
+        router_messages = [
+            {
+                "role": "system",
+                "content": (
+                    AGENT_ROUTER_PROMPT
+                )
+            }
+        ]
 
-        for keywords in (
-            self.tool_keywords.values()
-        ):
-            for keyword in keywords:
-                if keyword in lowered:
-                    return "tool"
+        router_messages.extend(
+            memory_context[-10:]
+        )
 
-        return "chat"
+        router_messages.append(
+            {
+                "role": "user",
+                "content": message
+            }
+        )
+
+        raw_response = await (
+            self.provider.generate_response(
+                messages=router_messages,
+                temperature=0.1
+            )
+        )
+
+        logger.info(
+            "Autonomous router "
+            "response=%s",
+            raw_response
+        )
+
+        try:
+            parsed = json.loads(
+                raw_response
+            )
+
+            if not isinstance(
+                parsed,
+                dict
+            ):
+                raise ValueError(
+                    "Router response "
+                    "must be dict"
+                )
+
+            return parsed
+
+        except Exception:
+            logger.exception(
+                "Router JSON parse failed"
+            )
+
+            return {
+                "tool": "none"
+            }
 
     async def build_memory_context(
         self,
@@ -286,14 +323,11 @@ class AIService:
     async def handle_chat(
         self,
         telegram_user_id: int,
-        message: str
+        message: str,
+        memory_context: list[
+            dict[str, str]
+        ]
     ) -> str:
-        memory_context = (
-            await self.build_memory_context(
-                telegram_user_id
-            )
-        )
-
         messages = [
             {
                 "role": "system",
@@ -314,181 +348,56 @@ class AIService:
 
         response = await (
             self.provider.generate_response(
-                messages=messages
+                messages=messages,
+                temperature=0.7
             )
         )
 
         return response
 
-    async def parse_intent(
+    async def execute_autonomous_tool(
         self,
-        message: str
-    ) -> dict[str, Any]:
-        messages = [
-            {
-                "role": "system",
-                "content": (
-                    INTENT_PARSER_PROMPT
-                )
-            },
-            {
-                "role": "user",
-                "content": message
-            }
-        ]
-
-        raw_response = await (
-            self.provider.generate_response(
-                messages=messages,
-                temperature=0.2
-            )
-        )
-
-        logger.info(
-            "Intent parser raw "
-            "response=%s",
-            raw_response
-        )
-
-        try:
-            parsed = json.loads(
-                raw_response
-            )
-
-            if not isinstance(
-                parsed,
-                dict
-            ):
-                raise ValueError(
-                    "Intent response "
-                    "must be dict"
-                )
-
-            return parsed
-
-        except Exception:
-            logger.exception(
-                "Failed to parse "
-                "intent JSON"
-            )
-
-            return {
-                "intent": "chat",
-                "confidence": 0.0,
-                "summary": message,
-                "action_required": False,
-                "entities": {}
-            }
-
-    async def dispatch_tool(
-        self,
-        intent_data: dict[str, Any],
-        original_message: str
-    ) -> dict[str, Any]:
-        intent = (
-            intent_data.get(
-                "intent",
-                "chat"
-            )
-        )
-
-        logger.info(
-            "Dispatching tool "
-            "intent=%s",
-            intent
-        )
-
-        handler = (
-            self.intent_dispatcher.get(
-                intent
-            )
-        )
-
-        if handler is None:
-            fallback_response = (
-                await self.handle_chat_fallback(
-                    original_message
-                )
-            )
-
-            return {
-                "intent": intent,
-                "raw_output": (
-                    fallback_response
-                ),
-                "error": False
-            }
-
-        try:
-            result = await handler(
-                intent_data,
-                original_message
-            )
-
-            return {
-                "intent": intent,
-                "raw_output": result,
-                "error": False
-            }
-
-        except Exception as exc:
-            logger.exception(
-                "Tool dispatch failed: %s",
-                exc
-            )
-
-            return {
-                "intent": intent,
-                "raw_output": str(exc),
-                "error": True
-            }
-
-    async def handle_weather(
-        self,
-        intent_data: dict[str, Any],
-        original_message: str
+        tool_decision: dict[str, Any]
     ) -> str:
-        plugin = (
-            plugin_loader.get_plugin(
-                "weather"
+        tool_name = (
+            tool_decision.get(
+                "tool"
             )
-        )
-
-        if plugin is None:
-            raise RuntimeError(
-                "Weather service "
-                "is unavailable."
-            )
-
-        entities = (
-            intent_data.get(
-                "entities",
-                {}
-            )
-        )
-
-        city = (
-            entities.get("city")
-            or entities.get("location")
-            or original_message
         )
 
         logger.info(
-            "Executing weather "
-            "plugin city=%s",
-            city
+            "Executing autonomous "
+            "tool=%s",
+            tool_name
         )
 
-        result = await plugin.get_weather(
-            city
+        if tool_name == "web_search":
+            return await (
+                self.execute_web_search(
+                    tool_decision
+                )
+            )
+
+        if tool_name == "weather":
+            return await (
+                self.execute_weather(
+                    tool_decision
+                )
+            )
+
+        if tool_name == "system_status":
+            return await (
+                self.execute_system_status()
+            )
+
+        return (
+            "No suitable tool "
+            "was selected."
         )
 
-        return str(result)
-
-    async def handle_web_search(
+    async def execute_web_search(
         self,
-        intent_data: dict[str, Any],
-        original_message: str
+        tool_decision: dict[str, Any]
     ) -> str:
         plugin = (
             plugin_loader.get_plugin(
@@ -497,39 +406,79 @@ class AIService:
         )
 
         if plugin is None:
-            raise RuntimeError(
-                "Web search service "
+            return (
+                "Web search plugin "
                 "is unavailable."
             )
 
-        entities = (
-            intent_data.get(
-                "entities",
-                {}
+        query = (
+            tool_decision.get(
+                "query",
+                ""
             )
         )
 
-        query = (
-            entities.get("query")
-            or original_message
-        )
+        if not query:
+            return (
+                "Search query "
+                "was empty."
+            )
 
         logger.info(
-            "Executing web search "
-            "query=%s",
+            "Web search query=%s",
             query
         )
 
-        results = await plugin.search(
+        result = await plugin.search(
             query=query
         )
 
-        return str(results)
+        return str(result)
 
-    async def handle_system_status(
+    async def execute_weather(
         self,
-        intent_data: dict[str, Any],
-        original_message: str
+        tool_decision: dict[str, Any]
+    ) -> str:
+        plugin = (
+            plugin_loader.get_plugin(
+                "weather"
+            )
+        )
+
+        if plugin is None:
+            return (
+                "Weather plugin "
+                "is unavailable."
+            )
+
+        city = (
+            tool_decision.get(
+                "city",
+                ""
+            )
+        )
+
+        if not city:
+            return (
+                "City parameter "
+                "was empty."
+            )
+
+        logger.info(
+            "Weather city=%s",
+            city
+        )
+
+        result = await (
+            plugin.get_weather(
+                city
+            )
+        )
+
+        return str(result)
+
+    async def execute_system_status(
+        self
     ) -> str:
         memory = (
             psutil.virtual_memory()
@@ -559,7 +508,7 @@ class AIService:
             if plugin["enabled"]
         ]
 
-        result = (
+        return (
             f"System Status\n\n"
             f"Platform: "
             f"{platform.system()} "
@@ -568,7 +517,7 @@ class AIService:
             f"{cpu_usage}%\n"
             f"RAM Usage: "
             f"{memory.percent}%\n"
-            f"RAM Available: "
+            f"Available RAM: "
             f"{round(memory.available / 1024 / 1024)} MB\n"
             f"Disk Usage: "
             f"{disk.percent}%\n"
@@ -582,49 +531,13 @@ class AIService:
             f"{os.getenv('AI_PROVIDER')}"
         )
 
-        return result
-
-    async def handle_calendar_action(
-        self,
-        intent_data: dict[str, Any],
-        original_message: str
-    ) -> str:
-        return (
-            "Reminder and calendar "
-            "workflow routing is ready."
-        )
-
     async def summarize_tool_output(
         self,
         original_user_message: str,
-        intent_result: dict[str, Any],
-        raw_output: str,
-        tool_error: bool = False
+        tool_name: str,
+        raw_output: str
     ) -> str:
-        intent = (
-            intent_result.get(
-                "intent",
-                "unknown"
-            )
-        )
-
-        if tool_error:
-            instruction = (
-                "The tool execution "
-                "failed. Explain the "
-                "failure politely "
-                "without exposing "
-                "raw system errors."
-            )
-
-        else:
-            instruction = (
-                "Summarize the tool "
-                "result naturally "
-                "and conversationally."
-            )
-
-        summary_prompt = [
+        messages = [
             {
                 "role": "system",
                 "content": SUMMARY_PROMPT
@@ -632,14 +545,11 @@ class AIService:
             {
                 "role": "user",
                 "content": (
-                    f"Original User "
-                    f"Message:\n"
+                    f"User Message:\n"
                     f"{original_user_message}\n\n"
-                    f"Intent:\n"
-                    f"{intent}\n\n"
-                    f"Instruction:\n"
-                    f"{instruction}\n\n"
-                    f"Raw Tool Result:\n"
+                    f"Tool Used:\n"
+                    f"{tool_name}\n\n"
+                    f"Raw Tool Output:\n"
                     f"{raw_output}"
                 )
             }
@@ -648,7 +558,7 @@ class AIService:
         try:
             response = await (
                 self.provider.generate_response(
-                    messages=summary_prompt,
+                    messages=messages,
                     temperature=0.4
                 )
             )
@@ -657,82 +567,16 @@ class AIService:
 
         except Exception as exc:
             logger.exception(
-                "Tool summarization "
+                "Summary generation "
                 "failed: %s",
                 exc
             )
 
-            if tool_error:
-                return (
-                    "⚠️ Sorry, I couldn't "
-                    "complete that "
-                    "request right now."
-                )
-
             return (
-                "⚠️ I received the "
-                "result, but couldn't "
-                "summarize it properly."
+                "⚠️ Sorry, I couldn't "
+                "summarize the result "
+                "properly."
             )
-
-    async def generate_friendly_error(
-        self,
-        user_message: str
-    ) -> str:
-        prompt = [
-            {
-                "role": "system",
-                "content": SUMMARY_PROMPT
-            },
-            {
-                "role": "user",
-                "content": (
-                    "Generate a polite "
-                    "AI assistant error "
-                    "reply for the "
-                    "following user "
-                    f"message:\n"
-                    f"{user_message}"
-                )
-            }
-        ]
-
-        try:
-            return await (
-                self.provider.generate_response(
-                    messages=prompt,
-                    temperature=0.3
-                )
-            )
-
-        except Exception:
-            return (
-                "⚠️ Sorry, something "
-                "went wrong while "
-                "processing your "
-                "request."
-            )
-
-    async def handle_chat_fallback(
-        self,
-        message: str
-    ) -> str:
-        messages = [
-            {
-                "role": "system",
-                "content": SYSTEM_PROMPT
-            },
-            {
-                "role": "user",
-                "content": message
-            }
-        ]
-
-        return await (
-            self.provider.generate_response(
-                messages=messages
-            )
-        )
 
     async def store_conversation_pair(
         self,
@@ -790,7 +634,43 @@ class AIService:
         except Exception:
             logger.exception(
                 "Failed to clear "
-                "chat memory"
+                "memory"
+            )
+
+    async def generate_friendly_error(
+        self,
+        user_message: str
+    ) -> str:
+        messages = [
+            {
+                "role": "system",
+                "content": SUMMARY_PROMPT
+            },
+            {
+                "role": "user",
+                "content": (
+                    "Generate a friendly "
+                    "AI assistant error "
+                    "reply for this "
+                    f"user message:\n"
+                    f"{user_message}"
+                )
+            }
+        ]
+
+        try:
+            return await (
+                self.provider.generate_response(
+                    messages=messages,
+                    temperature=0.3
+                )
+            )
+
+        except Exception:
+            return (
+                "⚠️ Sorry, something "
+                "went wrong while "
+                "processing your request."
             )
 
     async def health_check(
