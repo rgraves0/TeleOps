@@ -26,8 +26,11 @@ from app.database.repositories.rclone_meta import (
 from app.plugins.loader import (
     plugin_loader,
 )
+# =====================================================================
+# FIXED: Imported 'InboxService' class instead of lowercase 'inbox_service'
+# =====================================================================
 from app.services.inbox_service import (
-    inbox_service,
+    InboxService,
 )
 from app.services.plugin_service import (
     plugin_service,
@@ -203,6 +206,11 @@ class AIService:
         self.rclone_repository = (
             RcloneMetaRepository()
         )
+        
+        # =====================================================================
+        # FIXED: Instantiated the InboxService class correctly
+        # =====================================================================
+        self.inbox_service = InboxService()
 
     async def process_user_message(
         self,
@@ -681,8 +689,11 @@ class AIService:
                     "not configured."
                 )
 
+            # =====================================================================
+            # FIXED: Called fetch_emails via self.inbox_service instance
+            # =====================================================================
             emails = await (
-                inbox_service.fetch_emails(
+                self.inbox_service.fetch_emails(
                     telegram_user_id=(
                         telegram_user_id
                     ),
