@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import logging
 import os
 
@@ -27,7 +28,7 @@ class AIProvider:
 
         self.provider = os.getenv(
             "AI_PROVIDER",
-            "groq"
+            "openrouter"
         ).lower()
 
         self.timeout = int(
@@ -50,6 +51,40 @@ class AIProvider:
                 "1024"
             )
         )
+
+        # =====================================================
+        # OPENROUTER KEYS
+        # =====================================================
+
+        self.openrouter_keys = [
+            key.strip()
+            for key in os.getenv(
+                "OPENROUTER_API_KEYS",
+                ""
+            ).split(",")
+            if key.strip()
+        ]
+
+        self.openrouter_index = 0
+
+        # =====================================================
+        # GROQ KEYS
+        # =====================================================
+
+        self.groq_keys = [
+            key.strip()
+            for key in os.getenv(
+                "GROQ_API_KEYS",
+                ""
+            ).split(",")
+            if key.strip()
+        ]
+
+        self.groq_index = 0
+
+    # =========================================================
+    # PUBLIC API
+    # =========================================================
 
     async def generate_response(
         self,
@@ -96,6 +131,36 @@ class AIProvider:
         messages: list[dict]
     ) -> str:
 
+        if self.provider == "openrouter":
+
+            try:
+
+                return await (
+                    self._openrouter_chat(
+                        messages
+                    )
+                )
+
+            except Exception as exc:
+
+                logger.exception(
+                    "OpenRouter failed"
+                )
+
+                if self.groq_keys:
+
+                    logger.warning(
+                        "Falling back to Groq..."
+                    )
+
+                    return await (
+                        self._groq_chat(
+                            messages
+                        )
+                    )
+
+                raise exc
+
         if self.provider == "groq":
 
             return await (
@@ -112,113 +177,359 @@ class AIProvider:
                 )
             )
 
-        if self.provider == "openai":
-
-            return await (
-                self._openai_chat(
-                    messages
-                )
-            )
-
-        if self.provider == "openrouter":
-
-            return await (
-                self._openrouter_chat(
-                    messages
-                )
-            )
-
         raise AIProviderError(
             f"Unsupported provider: "
             f"{self.provider}"
         )
+
+    # =========================================================
+    # OPENROUTER
+    # =========================================================
+
+    async def _openrouter_chat(
+        self,
+        messages: list[dict]
+    ) -> str:
+
+        if not self.openrouter_keys:
+
+            raise AIProviderError(
+                "Missing OPENROUTER_API_KEYS"
+            )
+
+        model = os.getenv(
+            "OPENROUTER_MODEL",
+            "openrouter/auto"
+        )
+
+        url = (
+            "https://openrouter.ai/"
+            "api/v1/chat/completions"
+        )
+
+        last_error = None
+
+        for _ in range(
+            len(self.openrouter_keys)
+        ):
+
+            api_key = (
+                self.openrouter_keys[
+                    self.openrouter_index
+                ]
+            )
+
+            headers = {
+                "Authorization": (
+                    f"Bearer {api_key}"
+                ),
+                "Content-Type": (
+                    "application/json"
+                ),
+                "HTTP-Referer": (
+                    "https://github.com"
+                ),
+                "X-Title": (
+                    "TeleOps-AI"
+                )
+            }
+
+            payload = {
+                "model": model,
+                "messages": messages,
+                "temperature": (
+                    self.temperature
+                ),
+                "max_tokens": (
+                    self.max_tokens
+                )
+            }
+
+            logger.info(
+                "Sending OpenRouter request "
+                "using key index=%s",
+                self.openrouter_index
+            )
+
+            try:
+
+                async with httpx.AsyncClient(
+                    timeout=self.timeout
+                ) as client:
+
+                    response = await (
+                        client.post(
+                            url,
+                            headers=headers,
+                            json=payload
+                        )
+                    )
+
+                logger.info(
+                    "OpenRouter response "
+                    "status=%s",
+                    response.status_code
+                )
+
+                # =================================================
+                # SUCCESS
+                # =================================================
+
+                if response.status_code == 200:
+
+                    data = response.json()
+
+                    return (
+                        data["choices"][0]
+                        ["message"]["content"]
+                        .strip()
+                    )
+
+                # =================================================
+                # RATE LIMIT
+                # =================================================
+
+                if response.status_code == 429:
+
+                    logger.warning(
+                        "OpenRouter rate limit "
+                        "hit on key index=%s",
+                        self.openrouter_index
+                    )
+
+                    last_error = (
+                        response.text
+                    )
+
+                    self.openrouter_index = (
+                        (
+                            self.openrouter_index
+                            + 1
+                        )
+                        % len(
+                            self.openrouter_keys
+                        )
+                    )
+
+                    await asyncio.sleep(2)
+
+                    continue
+
+                # =================================================
+                # INVALID KEY
+                # =================================================
+
+                if response.status_code in (
+                    401,
+                    403
+                ):
+
+                    logger.warning(
+                        "Invalid OpenRouter key "
+                        "index=%s",
+                        self.openrouter_index
+                    )
+
+                    last_error = (
+                        response.text
+                    )
+
+                    self.openrouter_index = (
+                        (
+                            self.openrouter_index
+                            + 1
+                        )
+                        % len(
+                            self.openrouter_keys
+                        )
+                    )
+
+                    continue
+
+                # =================================================
+                # OTHER ERRORS
+                # =================================================
+
+                raise AIProviderError(
+                    response.text
+                )
+
+            except Exception as exc:
+
+                logger.exception(
+                    "OpenRouter request failed"
+                )
+
+                last_error = str(exc)
+
+                self.openrouter_index = (
+                    (
+                        self.openrouter_index
+                        + 1
+                    )
+                    % len(
+                        self.openrouter_keys
+                    )
+                )
+
+                await asyncio.sleep(2)
+
+        raise AIProviderError(
+            f"All OpenRouter keys failed: "
+            f"{last_error}"
+        )
+
+    # =========================================================
+    # GROQ
+    # =========================================================
 
     async def _groq_chat(
         self,
         messages: list[dict]
     ) -> str:
 
-        api_key = os.getenv(
-            "GROQ_API_KEY"
-        )
+        if not self.groq_keys:
+
+            raise AIProviderError(
+                "Missing GROQ_API_KEYS"
+            )
 
         model = os.getenv(
             "GROQ_MODEL",
             "qwen/qwen3-32b"
         )
 
-        if not api_key:
-
-            raise AIProviderError(
-                "Missing GROQ_API_KEY"
-            )
-
         url = (
             "https://api.groq.com/"
             "openai/v1/chat/completions"
         )
 
-        headers = {
-            "Authorization": (
-                f"Bearer {api_key}"
-            ),
-            "Content-Type": (
-                "application/json"
+        last_error = None
+
+        for _ in range(
+            len(self.groq_keys)
+        ):
+
+            api_key = (
+                self.groq_keys[
+                    self.groq_index
+                ]
             )
-        }
 
-        payload = {
-            "model": model,
-            "messages": messages,
-            "temperature": self.temperature,
-            "max_tokens": self.max_tokens
-        }
+            headers = {
+                "Authorization": (
+                    f"Bearer {api_key}"
+                ),
+                "Content-Type": (
+                    "application/json"
+                )
+            }
 
-        logger.info(
-            "Sending Groq request..."
+            payload = {
+                "model": model,
+                "messages": messages,
+                "temperature": (
+                    self.temperature
+                ),
+                "max_tokens": (
+                    self.max_tokens
+                )
+            }
+
+            logger.info(
+                "Sending Groq request "
+                "using key index=%s",
+                self.groq_index
+            )
+
+            try:
+
+                async with httpx.AsyncClient(
+                    timeout=self.timeout
+                ) as client:
+
+                    response = await (
+                        client.post(
+                            url,
+                            headers=headers,
+                            json=payload
+                        )
+                    )
+
+                logger.info(
+                    "Groq response "
+                    "status=%s",
+                    response.status_code
+                )
+
+                if response.status_code == 200:
+
+                    data = response.json()
+
+                    return (
+                        data["choices"][0]
+                        ["message"]["content"]
+                        .strip()
+                    )
+
+                if response.status_code == 429:
+
+                    logger.warning(
+                        "Groq rate limit hit "
+                        "on key index=%s",
+                        self.groq_index
+                    )
+
+                    last_error = (
+                        response.text
+                    )
+
+                    self.groq_index = (
+                        (
+                            self.groq_index
+                            + 1
+                        )
+                        % len(
+                            self.groq_keys
+                        )
+                    )
+
+                    await asyncio.sleep(2)
+
+                    continue
+
+                raise AIProviderError(
+                    response.text
+                )
+
+            except Exception as exc:
+
+                logger.exception(
+                    "Groq request failed"
+                )
+
+                last_error = str(exc)
+
+                self.groq_index = (
+                    (
+                        self.groq_index
+                        + 1
+                    )
+                    % len(
+                        self.groq_keys
+                    )
+                )
+
+                await asyncio.sleep(2)
+
+        raise AIProviderError(
+            f"All Groq keys failed: "
+            f"{last_error}"
         )
 
-        async with httpx.AsyncClient(
-            timeout=self.timeout
-        ) as client:
-
-            response = await client.post(
-                url,
-                headers=headers,
-                json=payload
-            )
-
-        logger.info(
-            "Groq response status=%s",
-            response.status_code
-        )
-
-        if response.status_code >= 400:
-
-            raise AIProviderError(
-                response.text
-            )
-
-        data = response.json()
-
-        try:
-
-            return (
-                data["choices"][0]
-                ["message"]["content"]
-                .strip()
-            )
-
-        except Exception as exc:
-
-            logger.exception(
-                "Invalid Groq response"
-            )
-
-            raise AIProviderError(
-                "Failed to parse "
-                "Groq response"
-            ) from exc
+    # =========================================================
+    # GEMINI
+    # =========================================================
 
     async def _gemini_chat(
         self,
@@ -307,107 +618,4 @@ class AIProvider:
             raise AIProviderError(
                 "Failed to parse "
                 "Gemini response"
-            ) from exc
-
-    async def _openai_chat(
-        self,
-        messages: list[dict]
-    ) -> str:
-
-        raise AIProviderError(
-            "OpenAI provider "
-            "not implemented yet"
-        )
-
-    async def _openrouter_chat(
-        self,
-        messages: list[dict]
-    ) -> str:
-
-        api_key = os.getenv(
-            "OPENROUTER_API_KEY"
-        )
-
-        model = os.getenv(
-            "OPENROUTER_MODEL",
-            "qwen/qwen3-32b:free"
-        )
-
-        if not api_key:
-
-            raise AIProviderError(
-                "Missing OPENROUTER_API_KEY"
-            )
-
-        url = (
-            "https://openrouter.ai/"
-            "api/v1/chat/completions"
-        )
-
-        headers = {
-            "Authorization": (
-                f"Bearer {api_key}"
-            ),
-            "Content-Type": (
-                "application/json"
-            ),
-            "HTTP-Referer": (
-                "https://github.com"
-            ),
-            "X-Title": (
-                "TeleOps-AI"
-            )
-        }
-
-        payload = {
-            "model": model,
-            "messages": messages,
-            "temperature": self.temperature,
-            "max_tokens": self.max_tokens
-        }
-
-        logger.info(
-            "Sending OpenRouter request..."
-        )
-
-        async with httpx.AsyncClient(
-            timeout=self.timeout
-        ) as client:
-
-            response = await client.post(
-                url,
-                headers=headers,
-                json=payload
-            )
-
-        logger.info(
-            "OpenRouter response status=%s",
-            response.status_code
-        )
-
-        if response.status_code >= 400:
-
-            raise AIProviderError(
-                response.text
-            )
-
-        data = response.json()
-
-        try:
-
-            return (
-                data["choices"][0]
-                ["message"]["content"]
-                .strip()
-            )
-
-        except Exception as exc:
-
-            logger.exception(
-                "Invalid OpenRouter response"
-            )
-
-            raise AIProviderError(
-                "Failed to parse "
-                "OpenRouter response"
             ) from exc
