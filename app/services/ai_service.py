@@ -147,6 +147,8 @@ RULES:
 - Return ONLY valid JSON
 - Never return markdown
 - Never explain reasoning
+- Never wrap JSON in ``` blocks
+- Return raw JSON object only
 """
 
 
