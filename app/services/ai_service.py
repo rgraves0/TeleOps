@@ -41,6 +41,8 @@ plugin_service = PluginService()
 
 WORKFLOW_ROUTER_PROMPT = """
 You are TeleOps-AI Autonomous Workflow Router.
+Return ONLY raw JSON.
+Do not use markdown code blocks.
 
 Your job:
 - Analyze user requests
